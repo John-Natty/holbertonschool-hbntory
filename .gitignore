@@ -1,0 +1,36 @@
+# Variables d'environnement
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# Tests et couverture
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Flask
+instance/
+
+# Base locale éventuelle
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+
+# Système
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
