@@ -291,7 +291,7 @@ n’est conservé dans le MVP.
 ## 5. Diagramme général
 
 ```mermaid
-flowchart LR
+flowchart TB
     Employee[Employé] --> Backoffice[Backoffice Flask + Jinja2]
 
     Backoffice --> ORM[SQLAlchemy]
