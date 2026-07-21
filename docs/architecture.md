@@ -116,9 +116,9 @@ L’administrateur peut :
 
 - lister les common users ;
 - créer un common user ;
-- modifier sa branche ;
-- modifier son mot de passe ;
-- désactiver son compte avec un soft-delete.
+- modifier la branche assignée à un common user ;
+- modifier le mot de passe d’un common user ;
+- désactiver le compte d’un common user avec un soft-delete.
 
 L’administrateur ne peut pas gérer les stocks.
 
@@ -131,7 +131,7 @@ Il peut uniquement :
 - consulter le stock de sa branche ;
 - ajouter du stock dans sa branche ;
 - retirer du stock dans sa branche ;
-- consulter la quantité d’un produit.
+- consulter la quantité d’un produit dans sa branche.
 
 Il ne peut pas gérer les utilisateurs ni agir sur une autre branche.
 
@@ -292,22 +292,30 @@ n’est conservé dans le MVP.
 
 ```mermaid
 flowchart TB
-    Employee[Employé] --> Backoffice[Backoffice Flask + Jinja2]
+    PublicUser[Utilisateur public]
+    Client[Client web public]
+    AIService[AI Query Service]
+    MCP[Serveur MCP]
 
-    Backoffice --> ORM[SQLAlchemy]
-    ORM --> Database[(PostgreSQL)]
+    Employee[Employé]
+    Backoffice[Backoffice Flask + Jinja2]
+    ORM[SQLAlchemy]
+    Database[(PostgreSQL)]
 
-    Backoffice --> ProductAPI[API Produit externe]
+    ProductAPI[API Produit externe]
 
-    PublicUser[Utilisateur public] --> Client[Client web public]
-    Client -->|POST /api/query| AIService[AI Query Service]
-
-    AIService -->|Appels MCP| MCP[Serveur MCP]
+    PublicUser --> Client
+    Client -->|POST /api/query| AIService
+    AIService -->|Appels MCP| MCP
 
     MCP -->|Outils produits| ProductAPI
-    MCP -->|Outils stock| InternalAPI[API interne Backoffice]
+    MCP -->|HTTP /internal/stocks/*| Backoffice
 
-    InternalAPI --> Backoffice
+    Employee --> Backoffice
+    Backoffice --> ORM
+    ORM --> Database
+
+    Backoffice -->|Validation des produits| ProductAPI
 ```
 
 ---
@@ -479,6 +487,21 @@ Il n’est jamais versionné.
 Le fichier `.env.example` contient uniquement les noms des variables et
 des valeurs fictives.
 
+### 10.5 Protection CSRF
+
+Les formulaires du Backoffice qui modifient des données seront protégés
+contre les attaques CSRF.
+
+Chaque formulaire d’ajout, de retrait ou de modification contiendra un
+jeton CSRF vérifié côté serveur.
+
+Cette protection pourra être mise en œuvre avec Flask-WTF ou
+`CSRFProtect`.
+
+Les endpoints de l’API interne n’utiliseront pas les sessions du
+navigateur. Ils seront protégés par la clé interne transmise dans
+l’en-tête `X-Internal-API-Key`.
+
 ---
 
 ## 11. Déploiement local
@@ -590,3 +613,216 @@ Les décisions détaillées sont documentées dans :
 - `ADR 0003` : serveur MCP personnalisé pour les stocks ;
 - `ADR 0004` : bcrypt et sessions Flask ;
 - `ADR 0005` : monorepo multi-services.
+
+---
+
+## 16. Stratégie de retrait atomique du stock
+
+Les retraits de stock seront exécutés dans une transaction.
+
+La mise à jour ne sera appliquée que si la quantité disponible est
+supérieure ou égale à la quantité demandée.
+
+L’opération suivra le principe suivant :
+
+1. valider que la quantité demandée est un entier strictement positif ;
+2. exécuter une mise à jour conditionnelle ;
+3. diminuer le stock uniquement si la quantité disponible est suffisante ;
+4. vérifier qu’une ligne a réellement été modifiée ;
+5. annuler la transaction si le stock est insuffisant.
+
+Cette stratégie évite que deux retraits simultanés rendent le stock
+négatif.
+
+---
+
+## 17. API interne de consultation des stocks
+
+Le Backoffice exposera une API interne en lecture seule utilisée
+uniquement par le serveur MCP.
+
+Endpoints prévus :
+
+- `GET /internal/stocks/products/{product_id}` :
+  retourne les stocks d’un produit dans les différentes branches ;
+
+- `GET /internal/stocks/branches/{branch_id}` :
+  retourne les identifiants produit et les quantités d’une branche ;
+
+- `POST /internal/stocks/check-shopping-list` :
+  vérifie quelles branches peuvent satisfaire une liste d’achats.
+
+Cette API ne retourne aucune donnée descriptive de produit.
+Elle retourne uniquement les identifiants produit, les branches et
+les quantités.
+
+### 17.1 Stock par produit
+
+Endpoint :
+
+`GET /internal/stocks/products/{product_id}`
+
+Réponse réussie :
+
+```json
+{
+  "success": true,
+  "product_id": 12,
+  "branches": [
+    {
+      "branch_id": 1,
+      "branch_name": "Toulouse",
+      "quantity": 8
+    }
+  ],
+  "error": null
+}
+```
+
+Si le produit n’est présent dans aucune branche :
+
+```json
+{
+  "success": true,
+  "product_id": 12,
+  "branches": [],
+  "error": null
+}
+```
+
+Une liste vide n’est pas considérée comme une erreur.
+
+### 17.2 Stock par branche
+
+Endpoint :
+
+`GET /internal/stocks/branches/{branch_id}`
+
+Réponse réussie :
+
+```json
+{
+  "success": true,
+  "branch": {
+    "id": 1,
+    "name": "Toulouse"
+  },
+  "stocks": [
+    {
+      "product_id": 12,
+      "quantity": 8
+    },
+    {
+      "product_id": 25,
+      "quantity": 4
+    }
+  ],
+  "error": null
+}
+```
+
+L’API interne ne retourne aucune donnée descriptive de produit.
+Le serveur MCP récupère ces informations depuis l’API Produit externe.
+
+### 17.3 Vérification d’une liste d’achats
+
+Endpoint :
+
+`POST /internal/stocks/check-shopping-list`
+
+Corps JSON attendu :
+
+```json
+{
+  "items": [
+    {
+      "product_id": 12,
+      "quantity": 3
+    },
+    {
+      "product_id": 25,
+      "quantity": 2
+    }
+  ]
+}
+```
+
+Réponse réussie :
+
+```json
+{
+  "success": true,
+  "matching_branches": [
+    {
+      "branch_id": 1,
+      "branch_name": "Toulouse",
+      "items": [
+        {
+          "product_id": 12,
+          "requested_quantity": 3,
+          "available_quantity": 8
+        },
+        {
+          "product_id": 25,
+          "requested_quantity": 2,
+          "available_quantity": 4
+        }
+      ]
+    }
+  ],
+  "error": null
+}
+```
+
+Si aucune branche ne peut satisfaire toute la liste :
+
+```json
+{
+  "success": true,
+  "matching_branches": [],
+  "error": null
+}
+```
+
+### 17.4 Format des erreurs
+
+Toutes les erreurs suivent ce format :
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "branch_not_found",
+    "message": "La branche demandée n’existe pas."
+  }
+}
+```
+
+| Statut HTTP | Utilisation |
+|---|---|
+| `400 Bad Request` | Corps JSON, identifiant ou quantité invalide |
+| `403 Forbidden` | Clé interne absente ou incorrecte |
+| `404 Not Found` | Branche inexistante |
+| `500 Internal Server Error` | Erreur interne ou base indisponible |
+| `502 Bad Gateway` | Service externe nécessaire indisponible |
+
+L’absence de stock retourne une réponse `200 OK` avec une liste vide.
+
+---
+
+## 18. Protection de l’API interne
+
+Les endpoints `/internal/` ne sont pas destinés au client public.
+
+Le serveur MCP enverra une clé interne dans l’en-tête HTTP :
+
+`X-Internal-API-Key`
+
+Le Backoffice comparera cette valeur avec la variable d’environnement
+`INTERNAL_API_KEY`.
+
+Une requête sans clé ou avec une clé invalide sera refusée avec une
+réponse `403 Forbidden`.
+
+La véritable clé sera enregistrée uniquement dans `.env`.
+Le fichier `.env.example` contiendra une valeur fictive.

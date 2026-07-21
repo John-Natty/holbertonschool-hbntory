@@ -1,13 +1,14 @@
 services:
-  product-api:
-    # Image fournie par l'énoncé (API Produit en lecture seule).
-    # Remplacer la valeur par l'image réelle indiquée dans la Task.
-    image: ${PRODUCT_API_IMAGE:-holberton/product-api:latest}
+  external-products-api:
+    # API Produit officielle, construite depuis son dépôt Git.
+    build:
+      context: https://github.com/hbtn-edu/hbntory-products-api.git
     ports:
-      - "${PRODUCT_API_PORT:-8000}:8000"
+      # Port ordinateur : port interne du conteneur
+      - "${PRODUCT_API_PORT:-5001}:5000"
     restart: unless-stopped
 
-  db:
+  database:
     image: postgres:16
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -16,34 +17,42 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - database_data:/var/lib/postgresql/data
     restart: unless-stopped
 
-  # --- Services à compléter plus tard --------------------------------------
+  # --- Services à compléter progressivement -------------------------------
 
   # backoffice:
   #   build: ./backoffice
-  #   env_file: .env
+  #   env_file:
+  #     - .env
   #   depends_on:
-  #     - db
-  #     - product-api
+  #     - database
+  #     - external-products-api
   #   ports:
   #     - "5000:5000"
+  #   restart: unless-stopped
 
-  # product-mcp:
+  # product-mcp-server:
   #   build: ./product_mcp_server
-  #   env_file: .env
+  #   env_file:
+  #     - .env
   #   depends_on:
-  #     - db
-  #     - product-api
+  #     - external-products-api
+  #     - backoffice
+  #   ports:
+  #     - "8000:8000"
+  #   restart: unless-stopped
 
   # ai-service:
   #   build: ./ai_service
-  #   env_file: .env
+  #   env_file:
+  #     - .env
   #   depends_on:
-  #     - product-mcp
+  #     - product-mcp-server
   #   ports:
   #     - "8001:8001"
+  #   restart: unless-stopped
 
   # client-web:
   #   build: ./client_web
@@ -51,6 +60,7 @@ services:
   #     - ai-service
   #   ports:
   #     - "8080:80"
+  #   restart: unless-stopped
 
 volumes:
-  db_data:
+  database_data:

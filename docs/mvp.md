@@ -16,6 +16,8 @@ on la termine avant toute autre chose. La **partie 2** liste ce qui est
 - Ajout de stock.
 - Retrait de stock.
 - Contrôle des rôles côté backend.
+- Docker Compose global.
+- Suite de tests automatisés.
 
 ### Serveur MCP
 
@@ -49,8 +51,6 @@ que si le scope obligatoire est **entièrement terminé** :
 - Journaux d'audit (audit logs).
 - Mémoire de conversation.
 - Streaming SSE / WebSocket.
-- Docker Compose global.
-- Suite de tests automatisés.
 - Documentation OpenAPI.
 - Rate limiting.
 - Meilleure recherche produit.
