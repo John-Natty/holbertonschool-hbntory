@@ -6,27 +6,44 @@
 # Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
+*$py.class
+*.so
+
+# Environnements virtuels
 .venv/
 venv/
+env/
+ENV/
+
+# Distribution et packaging
+build/
+dist/
+*.egg-info/
+.eggs/
 
 # Tests et couverture
 .pytest_cache/
 .coverage
+coverage.xml
 htmlcov/
+.tox/
+
+# Outils Python
+.mypy_cache/
+.ruff_cache/
 
 # Flask
 instance/
 
-# Base locale éventuelle
+# Bases de données locales
 *.db
 *.sqlite
 *.sqlite3
 
-# IDE
+# IDE et éditeurs
 .vscode/
 .idea/
+*.swp
 
 # Système
 .DS_Store
