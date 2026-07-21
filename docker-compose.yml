@@ -1,0 +1,56 @@
+services:
+  product-api:
+    # Image fournie par l'énoncé (API Produit en lecture seule).
+    # Remplacer la valeur par l'image réelle indiquée dans la Task.
+    image: ${PRODUCT_API_IMAGE:-holberton/product-api:latest}
+    ports:
+      - "${PRODUCT_API_PORT:-8000}:8000"
+    restart: unless-stopped
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # --- Services à compléter plus tard --------------------------------------
+
+  # backoffice:
+  #   build: ./backoffice
+  #   env_file: .env
+  #   depends_on:
+  #     - db
+  #     - product-api
+  #   ports:
+  #     - "5000:5000"
+
+  # product-mcp:
+  #   build: ./product_mcp_server
+  #   env_file: .env
+  #   depends_on:
+  #     - db
+  #     - product-api
+
+  # ai-service:
+  #   build: ./ai_service
+  #   env_file: .env
+  #   depends_on:
+  #     - product-mcp
+  #   ports:
+  #     - "8001:8001"
+
+  # client-web:
+  #   build: ./client_web
+  #   depends_on:
+  #     - ai-service
+  #   ports:
+  #     - "8080:80"
+
+volumes:
+  db_data:
