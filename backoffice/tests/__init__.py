@@ -1,0 +1,1 @@
+"""Tests automatisés du Backoffice HBntory."""

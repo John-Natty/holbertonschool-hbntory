@@ -13,6 +13,12 @@ from app.extensions import (
     migrate,
 )
 
+# Valeurs d'exemple qui ne doivent jamais être utilisées réellement.
+PLACEHOLDER_SECRET_KEYS = {
+    "your_flask_secret_key",
+    "replace_with_a_random_secret",
+}
+
 
 def env_to_bool(variable_name, default=False):
     """Convertit une variable d'environnement en booléen."""
@@ -32,14 +38,32 @@ def env_to_bool(variable_name, default=False):
     }
 
 
-def create_app():
+def create_app(test_config=None):
     """Crée et configure l'application Flask."""
     # Crée l'instance principale de l'application.
     app = Flask(__name__)
 
-    # Récupère les variables obligatoires.
-    database_url = os.getenv("DATABASE_URL")
-    secret_key = os.getenv("SECRET_KEY")
+    # Charge la configuration normale depuis l'environnement.
+    app.config.from_mapping(
+        SQLALCHEMY_DATABASE_URI=os.getenv("DATABASE_URL"),
+        SQLALCHEMY_TRACK_MODIFICATIONS=False,
+        SECRET_KEY=os.getenv("SECRET_KEY"),
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_SECURE=env_to_bool(
+            "SESSION_COOKIE_SECURE",
+            default=False,
+        ),
+        SESSION_COOKIE_NAME="hbntory_session",
+    )
+
+    # Remplace la configuration normale pendant les tests.
+    if test_config is not None:
+        app.config.update(test_config)
+
+    # Récupère les valeurs finales après la configuration de test.
+    database_url = app.config.get("SQLALCHEMY_DATABASE_URI")
+    secret_key = app.config.get("SECRET_KEY")
 
     # Refuse de démarrer sans connexion PostgreSQL.
     if not database_url:
@@ -53,35 +77,36 @@ def create_app():
             "La variable d'environnement SECRET_KEY est manquante."
         )
 
-    # Refuse la valeur factice du fichier d'exemple.
-    if secret_key == "your_flask_secret_key":
+    # Refuse une clé qui n'est pas une chaîne de caractères.
+    if not isinstance(secret_key, str):
+        raise RuntimeError(
+            "La variable SECRET_KEY doit être une chaîne."
+        )
+
+    # Refuse les valeurs factices présentes dans les exemples.
+    if secret_key in PLACEHOLDER_SECRET_KEYS:
         raise RuntimeError(
             "La variable SECRET_KEY utilise encore une valeur d'exemple."
         )
 
-    # Configure SQLAlchemy.
-    app.config["SQLALCHEMY_DATABASE_URI"] = database_url
-    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    # Refuse une clé trop courte.
+    if len(secret_key) < 32:
+        raise RuntimeError(
+            "La variable SECRET_KEY doit contenir "
+            "au moins 32 caractères."
+        )
 
-    # Configure la signature des sessions et des formulaires CSRF.
-    app.config["SECRET_KEY"] = secret_key
+    # Sécurise le cookie créé par l'option « Rester connecté ».
+    app.config["REMEMBER_COOKIE_HTTPONLY"] = True
+    app.config["REMEMBER_COOKIE_SAMESITE"] = "Lax"
 
-    # Empêche JavaScript d'accéder au cookie de session.
-    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    # Le cookie remember utilise la même règle HTTPS
+    # que le cookie principal de session.
+    app.config["REMEMBER_COOKIE_SECURE"] = app.config[
+        "SESSION_COOKIE_SECURE"
+    ]
 
-    # Limite l'envoi du cookie depuis des sites externes.
-    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-
-    # Doit être activé uniquement lorsque HTTPS est utilisé.
-    app.config["SESSION_COOKIE_SECURE"] = env_to_bool(
-        "SESSION_COOKIE_SECURE",
-        default=False,
-    )
-
-    # Donne un nom identifiable au cookie de session.
-    app.config["SESSION_COOKIE_NAME"] = "hbntory_session"
-
-    # Initialise toutes les extensions Flask.
+    # Initialise les extensions Flask.
     db.init_app(app)
     bcrypt.init_app(app)
     migrate.init_app(app, db)
@@ -91,8 +116,8 @@ def create_app():
     # Configure la route de connexion.
     login_manager.login_view = "auth.login"
 
-    # Message affiché lors d'un accès anonyme
-    # à une route protégée.
+    # Message affiché lorsqu'un visiteur anonyme
+    # tente d'accéder à une route protégée.
     login_manager.login_message = (
         "Vous devez vous connecter pour accéder à cette page."
     )
@@ -108,11 +133,11 @@ def create_app():
     def load_user(user_id):
         """Recharge un utilisateur actif depuis la session."""
         try:
-            # L'identifiant stocké dans la session est une chaîne.
+            # Flask-Login stocke l'identifiant sous forme de chaîne.
             numeric_user_id = int(user_id)
 
         except (TypeError, ValueError):
-            # Refuse un identifiant invalide.
+            # Refuse un identifiant de session invalide.
             return None
 
         # Recharge uniquement un utilisateur encore actif.
@@ -123,7 +148,7 @@ def create_app():
             )
         )
 
-    # Importe les blueprints après l'initialisation des extensions.
+    # Importe les blueprints après les extensions.
     from app.auth import auth_bp
     from app.main import main_bp
 

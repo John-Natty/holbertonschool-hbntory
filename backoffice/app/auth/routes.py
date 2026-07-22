@@ -1,6 +1,6 @@
 """Routes de connexion et de déconnexion."""
 
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import unquote, urlsplit
 
 from flask import flash, redirect, render_template, request, url_for
 from flask_login import (
@@ -18,55 +18,71 @@ from app.models import User
 
 
 def is_safe_redirect_target(target):
-    """Vérifie qu'une redirection reste sur le domaine du Backoffice."""
-    # Refuse une destination absente.
-    if not target:
+    """Accepte uniquement un chemin interne au Backoffice."""
+    # Refuse une destination absente ou d'un mauvais type.
+    if not target or not isinstance(target, str):
         return False
 
-    # Adresse actuellement utilisée pour accéder au Backoffice.
-    current_url = urlsplit(request.host_url)
+    # Décode plusieurs fois pour repérer les caractères encodés.
+    decoded_target = target
 
-    # Transforme la destination en adresse complète.
-    redirect_url = urlsplit(
-        urljoin(request.host_url, target)
-    )
+    for _ in range(3):
+        new_target = unquote(decoded_target)
 
-    # Accepte uniquement les redirections HTTP ou HTTPS
-    # qui restent sur le même domaine.
-    return (
-        redirect_url.scheme in {"http", "https"}
-        and redirect_url.netloc == current_url.netloc
-    )
+        if new_target == decoded_target:
+            break
+
+        decoded_target = new_target
+
+    # Refuse les antislashs, souvent interprétés comme des slashs
+    # par certains navigateurs.
+    if "\\" in decoded_target:
+        return False
+
+    # Refuse les caractères de contrôle comme les retours à la ligne.
+    if any(
+        ord(character) < 32 or ord(character) == 127
+        for character in decoded_target
+    ):
+        return False
+
+    # La destination doit commencer par un seul slash.
+    if (
+        not decoded_target.startswith("/")
+        or decoded_target.startswith("//")
+    ):
+        return False
+
+    # Analyse la destination après son décodage.
+    parsed_target = urlsplit(decoded_target)
+
+    # Refuse toute destination contenant un domaine ou un protocole.
+    return not parsed_target.scheme and not parsed_target.netloc
 
 
 @auth_bp.route("/login", methods=["GET", "POST"])
 def login():
     """Connecte un utilisateur avec son username et son mot de passe."""
-    # Un utilisateur déjà connecté n'a pas besoin
-    # de revoir le formulaire de connexion.
+    # Redirige un utilisateur déjà connecté vers le tableau de bord.
     if current_user.is_authenticated:
         return redirect(url_for("main.dashboard"))
 
-    # Crée le formulaire Flask-WTF.
+    # Crée le formulaire de connexion protégé par CSRF.
     form = LoginForm()
 
-    # validate_on_submit vérifie :
-    # - que la requête est en POST ;
-    # - que les champs sont valides ;
-    # - que le jeton CSRF est valide.
+    # Vérifie la méthode POST, les champs et le jeton CSRF.
     if form.validate_on_submit():
-        # Normalise le username comme lors de sa création.
+        # Normalise le nom d'utilisateur avant la recherche.
         normalized_username = form.username.data.strip().lower()
 
-        # Recherche le compte sans tenir compte des majuscules.
+        # Recherche le compte sans tenir compte de la casse.
         user = db.session.scalar(
             select(User).where(
                 func.lower(User.username) == normalized_username
             )
         )
 
-        # Utilise un message générique pour ne pas révéler
-        # si le username existe ou si le compte est désactivé.
+        # Refuse un compte absent, inactif ou un mot de passe incorrect.
         invalid_credentials = (
             user is None
             or not user.is_active
@@ -74,10 +90,13 @@ def login():
         )
 
         if invalid_credentials:
+            # Utilise un message générique pour éviter
+            # de révéler l'existence d'un compte.
             flash(
                 "Nom d'utilisateur ou mot de passe incorrect.",
                 "danger",
             )
+
             return render_template(
                 "auth/login.html",
                 form=form,
@@ -94,18 +113,17 @@ def login():
             "success",
         )
 
-        # Flask-Login ajoute parfois une destination next
-        # lorsqu'un utilisateur est redirigé vers la connexion.
+        # Récupère la destination demandée avant la connexion.
         next_page = request.args.get("next")
 
-        # Refuse une redirection vers un autre site.
+        # Utilise le tableau de bord si la destination est dangereuse.
         if not is_safe_redirect_target(next_page):
             next_page = url_for("main.dashboard")
 
         return redirect(next_page)
 
     # Affiche le formulaire pour une requête GET
-    # ou lorsqu'une validation échoue.
+    # ou lorsque sa validation échoue.
     return render_template(
         "auth/login.html",
         form=form,
