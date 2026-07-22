@@ -2,7 +2,7 @@
 
 import os
 
-from flask import Flask
+from flask import Flask, render_template
 from sqlalchemy import select
 
 from app.extensions import (
@@ -157,5 +157,10 @@ def create_app(test_config=None):
 
     # Enregistre les routes principales.
     app.register_blueprint(main_bp)
+
+    @app.errorhandler(403)
+    def forbidden(_error):
+        """Affiche une page personnalisée lors d'un accès interdit."""
+        return render_template("errors/403.html"), 403
 
     return app
