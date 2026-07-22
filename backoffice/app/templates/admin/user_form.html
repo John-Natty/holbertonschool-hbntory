@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block title %}
+    {{ page_title }} — HBntory
+{% endblock %}
+
+{% block content %}
+    <section>
+        <h2>{{ page_title }}</h2>
+
+        {% if branches_available %}
+            <form method="post" novalidate>
+                {# Ajoute notamment le jeton de protection CSRF. #}
+                {{ form.hidden_tag() }}
+
+                <div>
+                    {{ form.username.label }}
+
+                    {{ form.username(
+                        autocomplete="username"
+                    ) }}
+
+                    {% for error in form.username.errors %}
+                        <p>{{ error }}</p>
+                    {% endfor %}
+                </div>
+
+                <div>
+                    {{ form.password.label }}
+
+                    {{ form.password(
+                        autocomplete="new-password"
+                    ) }}
+
+                    {% if is_edit %}
+                        <p>
+                            Laissez ce champ vide pour conserver
+                            le mot de passe actuel.
+                        </p>
+                    {% endif %}
+
+                    {% for error in form.password.errors %}
+                        <p>{{ error }}</p>
+                    {% endfor %}
+                </div>
+
+                <div>
+                    {{ form.confirm_password.label }}
+
+                    {{ form.confirm_password(
+                        autocomplete="new-password"
+                    ) }}
+
+                    {% for error in form.confirm_password.errors %}
+                        <p>{{ error }}</p>
+                    {% endfor %}
+                </div>
+
+                <div>
+                    {{ form.branch_id.label }}
+
+                    {{ form.branch_id() }}
+
+                    {% for error in form.branch_id.errors %}
+                        <p>{{ error }}</p>
+                    {% endfor %}
+                </div>
+
+                <div>
+                    {{ form.submit() }}
+
+                    <a href="{{ url_for('admin.list_users') }}">
+                        Annuler
+                    </a>
+                </div>
+            </form>
+        {% else %}
+            <p>
+                Aucune branche n'est disponible.
+                Il est impossible de gérer un utilisateur.
+            </p>
+
+            <a href="{{ url_for('admin.list_users') }}">
+                Retour à la liste
+            </a>
+        {% endif %}
+    </section>
+{% endblock %}

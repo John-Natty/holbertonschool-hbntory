@@ -6,10 +6,12 @@
         name="viewport"
         content="width=device-width, initial-scale=1.0"
     >
+
     <title>
         {% block title %}HBntory{% endblock %}
     </title>
 </head>
+
 <body>
     <header>
         <h1>HBntory</h1>
@@ -20,6 +22,12 @@
                     Accueil
                 </a>
 
+                {% if current_user.role == "admin" %}
+                    <a href="{{ url_for('admin.list_users') }}">
+                        Utilisateurs
+                    </a>
+                {% endif %}
+
                 <form
                     action="{{ url_for('auth.logout') }}"
                     method="post"
@@ -29,6 +37,7 @@
                         name="csrf_token"
                         value="{{ csrf_token() }}"
                     >
+
                     <button type="submit">
                         Se déconnecter
                     </button>

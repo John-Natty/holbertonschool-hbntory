@@ -151,12 +151,16 @@ def create_app(test_config=None):
     # Importe les blueprints après les extensions.
     from app.auth import auth_bp
     from app.main import main_bp
+    from app.admin import admin_bp
 
     # Enregistre les routes d'authentification.
     app.register_blueprint(auth_bp)
 
     # Enregistre les routes principales.
     app.register_blueprint(main_bp)
+
+    # Enregistre les routes d'administration.
+    app.register_blueprint(admin_bp)
 
     @app.errorhandler(403)
     def forbidden(_error):
