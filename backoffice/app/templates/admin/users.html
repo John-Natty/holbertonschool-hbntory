@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block title %}
+    Gestion des utilisateurs — HBntory
+{% endblock %}
+
+{% block content %}
+    <section>
+        <header>
+            <h2>Gestion des utilisateurs</h2>
+
+            <a href="{{ url_for('admin.create_user') }}">
+                Créer un utilisateur
+            </a>
+        </header>
+
+        {% if users %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Utilisateur</th>
+                        <th>Branche</th>
+                        <th>État</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    {% for user in users %}
+                        <tr>
+                            <td>{{ user.username }}</td>
+
+                            <td>
+                                {% if user.branch %}
+                                    {{ user.branch.name }}
+                                {% else %}
+                                    Aucune branche
+                                {% endif %}
+                            </td>
+
+                            <td>
+                                {% if user.is_active %}
+                                    Actif
+                                {% else %}
+                                    Inactif
+                                {% endif %}
+                            </td>
+
+                            <td>
+                                {# Le lien de modification doit être
+                                   placé dans la boucle utilisateur. #}
+                                <a
+                                    href="{{ url_for(
+                                        'admin.edit_user',
+                                        user_id=user.id
+                                    ) }}"
+                                >
+                                    Modifier
+                                </a>
+
+                                {# Le changement de statut utilise
+                                   uniquement une requête POST avec CSRF. #}
+                                <form
+                                    action="{{ url_for(
+                                        'admin.toggle_user_status',
+                                        user_id=user.id
+                                    ) }}"
+                                    method="post"
+                                >
+                                    <input
+                                        type="hidden"
+                                        name="csrf_token"
+                                        value="{{ csrf_token() }}"
+                                    >
+
+                                    {% if user.is_active %}
+                                        <button type="submit">
+                                            Désactiver
+                                        </button>
+                                    {% else %}
+                                        <button type="submit">
+                                            Réactiver
+                                        </button>
+                                    {% endif %}
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p>
+                Aucun utilisateur common n'a encore été créé.
+            </p>
+        {% endif %}
+    </section>
+{% endblock %}

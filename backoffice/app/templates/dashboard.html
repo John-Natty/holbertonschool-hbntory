@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}
+    Tableau de bord — HBntory
+{% endblock %}
+
+{% block content %}
+    <section>
+        <h2>Tableau de bord</h2>
+
+        <p>
+            Vous êtes connecté en tant que
+            <strong>{{ current_user.username }}</strong>.
+        </p>
+
+        <p>
+            Rôle :
+            <strong>{{ current_user.role }}</strong>
+        </p>
+
+        {% if current_user.branch %}
+            <p>
+                Branche :
+                <strong>{{ current_user.branch.name }}</strong>
+            </p>
+        {% else %}
+            <p>
+                Ce compte n'est rattaché à aucune branche.
+            </p>
+        {% endif %}
+    </section>
+{% endblock %}
