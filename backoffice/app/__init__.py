@@ -185,6 +185,7 @@ def create_app(test_config=None):
     from app.main import main_bp
     from app.admin import admin_bp
     from app.internal_api import internal_api_bp
+    from app.stock import stock_bp
 
     # L'API machine-à-machine utilise une clé interne plutôt qu'un jeton CSRF.
     csrf.exempt(internal_api_bp)
@@ -218,6 +219,10 @@ def create_app(test_config=None):
         """Indique si la requête vise l'API interne."""
 
         return request.path.startswith("/internal/")
+
+    # Enregistre les routes de gestion du stock.
+    app.register_blueprint(stock_bp)
+
 
     @app.errorhandler(403)
     def forbidden(error):
