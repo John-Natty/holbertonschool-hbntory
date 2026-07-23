@@ -48,6 +48,7 @@ def create_app(test_config=None):
         SQLALCHEMY_DATABASE_URI=os.getenv("DATABASE_URL"),
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
         SECRET_KEY=os.getenv("SECRET_KEY"),
+        INTERNAL_API_KEY=os.getenv("INTERNAL_API_KEY"),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_SECURE=env_to_bool(
@@ -152,6 +153,10 @@ def create_app(test_config=None):
     from app.auth import auth_bp
     from app.main import main_bp
     from app.admin import admin_bp
+    from app.internal_api import internal_api_bp
+
+    # L'API machine-à-machine utilise une clé interne plutôt qu'un jeton CSRF.
+    csrf.exempt(internal_api_bp)
 
     # Enregistre les routes d'authentification.
     app.register_blueprint(auth_bp)
@@ -161,6 +166,9 @@ def create_app(test_config=None):
 
     # Enregistre les routes d'administration.
     app.register_blueprint(admin_bp)
+
+    # Enregistre l'API interne de consultation des stocks.
+    app.register_blueprint(internal_api_bp)
 
     @app.errorhandler(403)
     def forbidden(_error):
