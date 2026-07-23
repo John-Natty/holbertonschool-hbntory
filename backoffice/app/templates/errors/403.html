@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}
+    Accès interdit — HBntory
+{% endblock %}
+
+{% block content %}
+    <section>
+        <h2>Accès interdit</h2>
+
+        <p>
+            Vous ne disposez pas des autorisations nécessaires
+            pour accéder à cette page.
+        </p>
+
+        <a href="{{ url_for('main.dashboard') }}">
+            Retourner au tableau de bord
+        </a>
+    </section>
+{% endblock %}

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>
+        {% block title %}HBntory{% endblock %}
+    </title>
+</head>
+
+<body>
+    <header>
+        <h1>HBntory</h1>
+
+        {% if current_user.is_authenticated %}
+            <nav>
+                <a href="{{ url_for('main.dashboard') }}">
+                    Accueil
+                </a>
+
+                {% if current_user.role == "admin" %}
+                    <a href="{{ url_for('admin.list_users') }}">
+                        Utilisateurs
+                    </a>
+                {% endif %}
+
+                <form
+                    action="{{ url_for('auth.logout') }}"
+                    method="post"
+                >
+                    <input
+                        type="hidden"
+                        name="csrf_token"
+                        value="{{ csrf_token() }}"
+                    >
+
+                    <button type="submit">
+                        Se déconnecter
+                    </button>
+                </form>
+            </nav>
+        {% endif %}
+    </header>
+
+    <main>
+        {% with messages = get_flashed_messages(
+            with_categories=true
+        ) %}
+            {% for category, message in messages %}
+                <div class="message {{ category }}">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>
