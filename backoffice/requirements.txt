@@ -6,3 +6,4 @@ Flask-Bcrypt
 Flask-WTF
 psycopg2-binary
 requests
+pytest

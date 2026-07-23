@@ -23,7 +23,6 @@ def _base_url() -> str:
 
     base_url = os.getenv("PRODUCT_API_BASE_URL")
 
-    # L'URL est obligatoire pour joindre l'API.
     if not base_url:
         raise ProductApiError(
             "La variable PRODUCT_API_BASE_URL est manquante."
@@ -33,45 +32,90 @@ def _base_url() -> str:
 
 
 def _get(path: str, params: dict | None = None) -> dict:
-    """Appelle l'API Produit en GET et retourne la réponse JSON."""
+    """Appelle l'API Produit en GET et retourne une réponse JSON valide."""
 
     url = f"{_base_url()}/api/v1{path}"
 
-    # Contacte l'API en gérant les pannes réseau et les délais.
     try:
-        response = requests.get(url, params=params, timeout=_TIMEOUT)
-    except requests.RequestException as error:
-        raise ProductApiError("L'API Produit est injoignable.") from error
+        response = requests.get(
+            url,
+            params=params,
+            timeout=_TIMEOUT,
+        )
 
-    # Un code 404 correspond à une ressource inexistante.
+    except requests.RequestException as error:
+        raise ProductApiError(
+            "L'API Produit est injoignable."
+        ) from error
+
     if response.status_code == 404:
         raise ProductNotFoundError("Produit introuvable.")
 
-    # Toute autre erreur HTTP est signalée clairement.
     if not response.ok:
         raise ProductApiError(
-            f"L'API Produit a répondu avec le code {response.status_code}."
+            "L'API Produit a répondu avec le code "
+            f"{response.status_code}."
         )
 
-    return response.json()
+    try:
+        data = response.json()
+
+    except (ValueError, requests.exceptions.JSONDecodeError) as error:
+        raise ProductApiError(
+            "L'API Produit a retourné un JSON invalide."
+        ) from error
+
+    if not isinstance(data, dict):
+        raise ProductApiError(
+            "La structure retournée par l'API Produit est invalide."
+        )
+
+    return data
 
 
 def get_product(product_id: int) -> dict:
     """Retourne les détails d'un produit à partir de son identifiant."""
 
-    return _get(f"/products/{product_id}")
+    product = _get(f"/products/{product_id}")
+
+    if "id" not in product:
+        raise ProductApiError(
+            "La réponse de l'API Produit ne contient aucun identifiant."
+        )
+
+    return product
 
 
 def search_products(query: str) -> list[dict]:
     """Retourne les produits correspondant à un mot-clé de recherche."""
 
-    data = _get("/products/search", params={"q": query})
+    data = _get(
+        "/products/search",
+        params={"q": query},
+    )
 
-    # Les résultats sont rangés sous la clé "results".
-    return data.get("results", [])
+    results = data.get("results")
+
+    if not isinstance(results, list):
+        raise ProductApiError(
+            "La liste de résultats de l'API Produit est invalide."
+        )
+
+    if not all(isinstance(product, dict) for product in results):
+        raise ProductApiError(
+            "Un résultat retourné par l'API Produit est invalide."
+        )
+
+    return results
 
 
 def list_products(limit: int = 20, offset: int = 0) -> dict:
-    """Retourne une page de produits avec ses infos de pagination."""
+    """Retourne une page de produits avec ses informations de pagination."""
 
-    return _get("/products", params={"limit": limit, "offset": offset})
+    return _get(
+        "/products",
+        params={
+            "limit": limit,
+            "offset": offset,
+        },
+    )
