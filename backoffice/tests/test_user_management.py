@@ -1,28 +1,23 @@
 """Tests de la gestion des utilisateurs par l'administrateur."""
 
-import os
 import re
-import tempfile
 import unittest
 from html import unescape
 
 from app import create_app
 from app.extensions import db
 from app.models import Branch, User
+from tests.test_helpers import (
+    clean_test_database,
+    get_test_database_url,
+)
 
 
 class UserManagementTestCase(unittest.TestCase):
     """Vérifie la gestion sécurisée des utilisateurs common."""
 
     def setUp(self):
-        """Prépare une application et une base SQLite temporaires."""
-        # Crée un fichier SQLite temporaire.
-        file_descriptor, self.database_path = tempfile.mkstemp(
-            suffix=".db"
-        )
-        os.close(file_descriptor)
-
-        # Crée une application réservée aux tests.
+        """Prépare les données dans PostgreSQL avant chaque test."""
         self.app = create_app(
             {
                 "TESTING": True,
@@ -30,22 +25,19 @@ class UserManagementTestCase(unittest.TestCase):
                     "cle-secrete-tests-gestion-utilisateurs-hbntory"
                 ),
                 "SQLALCHEMY_DATABASE_URI": (
-                    f"sqlite:///{self.database_path}"
+                    get_test_database_url()
                 ),
                 "SESSION_COOKIE_SECURE": False,
                 "WTF_CSRF_ENABLED": True,
             }
         )
 
-        # Crée un client HTTP simulant un navigateur.
         self.client = self.app.test_client()
 
-        # Crée les données nécessaires aux tests.
         with self.app.app_context():
-            db.create_all()
+            # Conserve le schéma et nettoie uniquement les données.
+            clean_test_database()
 
-            # Crée deux branches pour tester les changements
-            # d'affectation des utilisateurs.
             toulouse = Branch(name="Toulouse")
             carcassonne = Branch(name="Carcassonne")
 
@@ -57,7 +49,6 @@ class UserManagementTestCase(unittest.TestCase):
             )
             db.session.flush()
 
-            # Crée l'unique compte administrateur.
             admin = User(
                 username="superadmin",
                 role="admin",
@@ -66,7 +57,6 @@ class UserManagementTestCase(unittest.TestCase):
             )
             admin.set_password("MotDePasseAdmin123!")
 
-            # Crée un utilisateur common initial.
             common_user = User(
                 username="toulouse_user",
                 role="common",
@@ -85,27 +75,22 @@ class UserManagementTestCase(unittest.TestCase):
             )
             db.session.commit()
 
-            # Conserve les identifiants nécessaires aux tests.
             self.admin_id = admin.id
             self.common_user_id = common_user.id
             self.toulouse_id = toulouse.id
             self.carcassonne_id = carcassonne.id
 
     def tearDown(self):
-        """Supprime la base temporaire après chaque test."""
+        """Nettoie les données sans supprimer les tables."""
         with self.app.app_context():
+            db.session.rollback()
+            clean_test_database()
             db.session.remove()
-            db.drop_all()
-
-        # Supprime le fichier SQLite temporaire.
-        if os.path.exists(self.database_path):
-            os.remove(self.database_path)
 
     def get_csrf_token(self, response):
         """Extrait le jeton CSRF présent dans une page HTML."""
         html_content = response.get_data(as_text=True)
 
-        # Recherche la valeur du champ CSRF dans le formulaire.
         match = re.search(
             r'name="csrf_token"[^>]*value="([^"]+)"',
             html_content,
@@ -120,11 +105,9 @@ class UserManagementTestCase(unittest.TestCase):
 
     def login(self, username, password):
         """Connecte un utilisateur avec un jeton CSRF valide."""
-        # Charge d'abord la page pour obtenir un jeton CSRF.
         login_page = self.client.get("/auth/login")
         csrf_token = self.get_csrf_token(login_page)
 
-        # Envoie les identifiants avec le jeton CSRF.
         return self.client.post(
             "/auth/login",
             data={
@@ -137,16 +120,12 @@ class UserManagementTestCase(unittest.TestCase):
 
     def post_form(self, page_path, action_path, data):
         """Envoie un formulaire avec un jeton CSRF valide."""
-        # Charge la page contenant le formulaire.
         page = self.client.get(page_path)
         csrf_token = self.get_csrf_token(page)
 
-        # Copie les données pour ne pas modifier
-        # le dictionnaire original du test.
         form_data = dict(data)
         form_data["csrf_token"] = csrf_token
 
-        # Envoie le formulaire vers sa route d'action.
         return self.client.post(
             action_path,
             data=form_data,
@@ -185,15 +164,10 @@ class UserManagementTestCase(unittest.TestCase):
         html_content = response.get_data(as_text=True)
 
         self.assertEqual(response.status_code, 200)
-
-        # Le compte common doit apparaître dans le tableau.
         self.assertIn(
             "<td>toulouse_user</td>",
             html_content,
         )
-
-        # L'administrateur peut apparaître dans un message flash,
-        # mais ne doit pas apparaître dans une cellule du tableau.
         self.assertNotIn(
             "<td>superadmin</td>",
             html_content,
@@ -226,7 +200,6 @@ class UserManagementTestCase(unittest.TestCase):
                 )
             )
 
-            # Vérifie les données du compte créé.
             self.assertIsNotNone(user)
             self.assertEqual(user.role, "common")
             self.assertTrue(user.is_active)
@@ -234,14 +207,10 @@ class UserManagementTestCase(unittest.TestCase):
                 user.branch_id,
                 self.carcassonne_id,
             )
-
-            # Le mot de passe en clair ne doit pas être enregistré.
             self.assertNotEqual(
                 user.password_hash,
                 "NouveauMotDePasse123!",
             )
-
-            # Vérifie aussi que bcrypt accepte le mot de passe.
             self.assertTrue(
                 user.check_password(
                     "NouveauMotDePasse123!"
@@ -266,7 +235,6 @@ class UserManagementTestCase(unittest.TestCase):
             },
         )
 
-        # Le formulaire doit être réaffiché avec une erreur.
         self.assertEqual(response.status_code, 200)
 
         with self.app.app_context():
@@ -276,7 +244,6 @@ class UserManagementTestCase(unittest.TestCase):
                 )
             ).all()
 
-            # Aucun doublon ne doit avoir été créé.
             self.assertEqual(len(common_users), 1)
 
     def test_creation_sans_csrf_refusee(self):
@@ -404,13 +371,11 @@ class UserManagementTestCase(unittest.TestCase):
                 self.common_user_id,
             )
 
-            # Le compte existe toujours, mais il est désactivé.
             self.assertIsNotNone(user)
             self.assertFalse(user.is_active)
 
     def test_admin_reactive_un_utilisateur(self):
         """Vérifie la réactivation d'un utilisateur."""
-        # Désactive d'abord le compte directement en base.
         with self.app.app_context():
             user = db.session.get(
                 User,
@@ -455,7 +420,6 @@ class UserManagementTestCase(unittest.TestCase):
             f"/admin/users/{self.admin_id}/edit"
         )
 
-        # Les routes de gestion ne recherchent que les common.
         self.assertEqual(response.status_code, 404)
 
     def test_common_ne_peut_pas_changer_un_statut(self):
@@ -465,7 +429,6 @@ class UserManagementTestCase(unittest.TestCase):
             "MotDePasseToulouse123!",
         )
 
-        # Le dashboard contient un jeton CSRF pour le logout.
         dashboard = self.client.get("/")
         csrf_token = self.get_csrf_token(dashboard)
 
@@ -476,7 +439,6 @@ class UserManagementTestCase(unittest.TestCase):
             },
         )
 
-        # Le contrôle admin_required doit refuser l'accès.
         self.assertEqual(response.status_code, 403)
 
 

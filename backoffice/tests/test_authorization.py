@@ -1,7 +1,5 @@
 """Tests automatisés des autorisations du Backoffice."""
 
-import os
-import tempfile
 import unittest
 
 from app import create_app
@@ -12,20 +10,17 @@ from app.auth.decorators import (
 )
 from app.extensions import db
 from app.models import Branch, User
+from tests.test_helpers import (
+    clean_test_database,
+    get_test_database_url,
+)
 
 
 class AuthorizationTestCase(unittest.TestCase):
     """Vérifie les autorisations selon le rôle et la branche."""
 
     def setUp(self):
-        """Prépare une application et une base SQLite temporaires."""
-        # Crée un fichier de base de données temporaire.
-        file_descriptor, self.database_path = tempfile.mkstemp(
-            suffix=".db"
-        )
-        os.close(file_descriptor)
-
-        # Crée une application indépendante pour chaque test.
+        """Prépare les données dans PostgreSQL avant chaque test."""
         self.app = create_app(
             {
                 "TESTING": True,
@@ -33,22 +28,23 @@ class AuthorizationTestCase(unittest.TestCase):
                     "cle-secrete-reservee-aux-tests-autorisation"
                 ),
                 "SQLALCHEMY_DATABASE_URI": (
-                    f"sqlite:///{self.database_path}"
+                    get_test_database_url()
                 ),
                 "SESSION_COOKIE_SECURE": False,
                 "WTF_CSRF_ENABLED": False,
             }
         )
 
-        # Ajoute des routes uniquement utilisées par les tests.
+        # Ajoute des routes utilisées uniquement par les tests.
         self.register_test_routes()
 
         # Crée un client simulant un navigateur.
         self.client = self.app.test_client()
 
-        # Crée les données nécessaires aux tests.
         with self.app.app_context():
-            db.create_all()
+            # Garde le schéma PostgreSQL et nettoie uniquement
+            # les données laissées par un précédent test.
+            clean_test_database()
 
             branch_one = Branch(name="Toulouse")
             branch_two = Branch(name="Carcassonne")
@@ -103,16 +99,18 @@ class AuthorizationTestCase(unittest.TestCase):
             self.carcassonne_branch_id = branch_two.id
 
     def tearDown(self):
-        """Supprime la base temporaire après chaque test."""
+        """Nettoie les données sans supprimer les tables."""
         with self.app.app_context():
-            db.session.remove()
-            db.drop_all()
+            # Annule une éventuelle transaction incomplète.
+            db.session.rollback()
 
-        if os.path.exists(self.database_path):
-            os.remove(self.database_path)
+            # Supprime uniquement les données de hbntory_test.
+            clean_test_database()
+            db.session.remove()
 
     def register_test_routes(self):
         """Ajoute des routes protégées uniquement pour les tests."""
+
         @self.app.route("/test/admin")
         @admin_required
         def admin_page():
@@ -130,7 +128,7 @@ class AuthorizationTestCase(unittest.TestCase):
         )
         @own_branch_required
         def branch_stock_page(branch_id):
-            """Simule une page de stock limitée à une branche."""
+            """Simule une page stock limitée à une branche."""
             return f"Stock de la branche {branch_id}"
 
     def login(self, username, password):
@@ -185,7 +183,7 @@ class AuthorizationTestCase(unittest.TestCase):
         )
 
     def test_common_autorise_sur_page_stock(self):
-        """Vérifie qu'un utilisateur commun accède au stock."""
+        """Vérifie qu'un utilisateur common accède au stock."""
         self.login(
             "toulouse_user",
             "MotDePasseToulouse123!",

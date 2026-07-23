@@ -1,8 +1,6 @@
 """Tests automatisés de l'authentification du Backoffice."""
 
-import os
 import re
-import tempfile
 import unittest
 from html import unescape
 from urllib.parse import urlsplit
@@ -10,20 +8,17 @@ from urllib.parse import urlsplit
 from app import create_app
 from app.extensions import db
 from app.models import Branch, User
+from tests.test_helpers import (
+    clean_test_database,
+    get_test_database_url,
+)
 
 
 class AuthenticationTestCase(unittest.TestCase):
     """Vérifie la connexion, la session, le CSRF et la déconnexion."""
 
     def setUp(self):
-        """Prépare une base SQLite temporaire pour chaque test."""
-        # Crée un fichier temporaire indépendant de PostgreSQL.
-        file_descriptor, self.database_path = tempfile.mkstemp(
-            suffix=".db"
-        )
-        os.close(file_descriptor)
-
-        # Crée l'application avec une configuration réservée aux tests.
+        """Prépare les données dans PostgreSQL avant chaque test."""
         self.app = create_app(
             {
                 "TESTING": True,
@@ -31,7 +26,7 @@ class AuthenticationTestCase(unittest.TestCase):
                     "cle-secrete-reservee-aux-tests-hbntory"
                 ),
                 "SQLALCHEMY_DATABASE_URI": (
-                    f"sqlite:///{self.database_path}"
+                    get_test_database_url()
                 ),
                 "SESSION_COOKIE_SECURE": False,
                 "WTF_CSRF_ENABLED": True,
@@ -41,9 +36,10 @@ class AuthenticationTestCase(unittest.TestCase):
         # Crée un client HTTP simulant un navigateur.
         self.client = self.app.test_client()
 
-        # Crée les tables et les utilisateurs nécessaires.
         with self.app.app_context():
-            db.create_all()
+            # Garde les tables et supprime seulement
+            # les anciennes données de test.
+            clean_test_database()
 
             branch = Branch(name="Branche de test")
             db.session.add(branch)
@@ -63,7 +59,9 @@ class AuthenticationTestCase(unittest.TestCase):
                 is_active=False,
                 branch_id=branch.id,
             )
-            inactive_user.set_password("MotDePasseInactif123!")
+            inactive_user.set_password(
+                "MotDePasseInactif123!"
+            )
 
             db.session.add_all(
                 [
@@ -74,13 +72,13 @@ class AuthenticationTestCase(unittest.TestCase):
             db.session.commit()
 
     def tearDown(self):
-        """Supprime la base temporaire après chaque test."""
+        """Nettoie les données sans supprimer les tables."""
         with self.app.app_context():
+            # Annule une éventuelle transaction incomplète
+            # avant de nettoyer la base de test.
+            db.session.rollback()
+            clean_test_database()
             db.session.remove()
-            db.drop_all()
-
-        if os.path.exists(self.database_path):
-            os.remove(self.database_path)
 
     def get_csrf_token(self, response):
         """Extrait le jeton CSRF contenu dans une page HTML."""
@@ -107,10 +105,9 @@ class AuthenticationTestCase(unittest.TestCase):
         client=None,
     ):
         """Connecte un utilisateur avec un jeton CSRF valide."""
-        # Utilise le client fourni ou le client principal du test.
         current_client = client or self.client
 
-        # Charge le formulaire afin de créer le jeton CSRF.
+        # Charge le formulaire pour obtenir un jeton CSRF.
         login_page = current_client.get(
             "/auth/login",
             query_string=query_string,
