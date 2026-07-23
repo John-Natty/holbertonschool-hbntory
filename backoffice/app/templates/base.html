@@ -28,6 +28,16 @@
                     </a>
                 {% endif %}
 
+                {% if current_user.role == "common"
+                    and current_user.branch_id %}
+                    <a href="{{ url_for(
+                        'stock.list_branch_stock',
+                        branch_id=current_user.branch_id
+                    ) }}">
+                        Stock
+                    </a>
+                {% endif %}
+
                 <form
                     action="{{ url_for('auth.logout') }}"
                     method="post"

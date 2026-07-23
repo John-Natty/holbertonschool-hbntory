@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}
+    Stock — HBntory
+{% endblock %}
+
+{% block content %}
+    <section>
+        <h2>
+            Stock de {{ current_user.branch.name }}
+        </h2>
+
+        {% if rows %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Produit</th>
+                        <th>Identifiant</th>
+                        <th>Quantité</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    {% for row in rows %}
+                        <tr>
+                            <td>{{ row.name }}</td>
+                            <td>{{ row.product_id }}</td>
+                            <td>{{ row.quantity }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p>
+                Aucun produit en stock dans cette branche.
+            </p>
+        {% endif %}
+    </section>
+
+    <section>
+        <h3>Modifier le stock</h3>
+
+        <form method="post">
+            {{ form.csrf_token }}
+
+            <p>
+                {{ form.product_id.label }}
+                {{ form.product_id(id="product_id") }}
+
+                {% for error in form.product_id.errors %}
+                    <span class="message danger">
+                        {{ error }}
+                    </span>
+                {% endfor %}
+            </p>
+
+            <p>
+                {{ form.amount.label }}
+                {{ form.amount(id="amount") }}
+
+                {% for error in form.amount.errors %}
+                    <span class="message danger">
+                        {{ error }}
+                    </span>
+                {% endfor %}
+            </p>
+
+            <button
+                type="submit"
+                formaction="{{ url_for(
+                    'stock.add_branch_stock',
+                    branch_id=branch_id
+                ) }}"
+            >
+                Ajouter
+            </button>
+
+            <button
+                type="submit"
+                formaction="{{ url_for(
+                    'stock.remove_branch_stock',
+                    branch_id=branch_id
+                ) }}"
+            >
+                Retirer
+            </button>
+        </form>
+    </section>
+{% endblock %}
