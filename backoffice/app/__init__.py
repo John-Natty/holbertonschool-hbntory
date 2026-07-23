@@ -152,6 +152,7 @@ def create_app(test_config=None):
     from app.auth import auth_bp
     from app.main import main_bp
     from app.admin import admin_bp
+    from app.stock import stock_bp
 
     # Enregistre les routes d'authentification.
     app.register_blueprint(auth_bp)
@@ -161,6 +162,9 @@ def create_app(test_config=None):
 
     # Enregistre les routes d'administration.
     app.register_blueprint(admin_bp)
+
+    # Enregistre les routes de gestion du stock.
+    app.register_blueprint(stock_bp)
 
     @app.errorhandler(403)
     def forbidden(_error):
