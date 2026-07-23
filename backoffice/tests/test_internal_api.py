@@ -414,3 +414,127 @@ def test_shopping_list_does_not_require_csrf_token(
     )
 
     assert response.status_code == 200
+
+
+def test_internal_api_key_configuration_is_validated():
+    """Refuse les configurations dangereuses de la clé interne."""
+
+    import pytest
+
+    from app import create_app
+
+    invalid_keys = [
+        (
+            None,
+            "INTERNAL_API_KEY est manquante",
+        ),
+        (
+            12345,
+            "INTERNAL_API_KEY doit être une chaîne",
+        ),
+        (
+            "cle-trop-courte",
+            "au moins 32 caractères",
+        ),
+        (
+            "your_private_internal_api_key",
+            "utilise encore une valeur d'exemple",
+        ),
+    ]
+
+    for internal_api_key, expected_message in invalid_keys:
+        with pytest.raises(
+            RuntimeError,
+            match=expected_message,
+        ):
+            create_app(
+                {
+                    "TESTING": True,
+                    "SECRET_KEY": (
+                        "cle-secrete-reservee-aux-tests-hbntory"
+                    ),
+                    "INTERNAL_API_KEY": internal_api_key,
+                    "SQLALCHEMY_DATABASE_URI": (
+                        "postgresql://user:password@localhost/test"
+                    ),
+                }
+            )
+
+
+def test_unknown_internal_route_returns_json(
+    client,
+    internal_api_headers,
+):
+    """Retourne une erreur JSON pour une route interne inconnue."""
+
+    response = client.get(
+        "/internal/stocks/route-inconnue",
+        headers=internal_api_headers,
+    )
+
+    assert response.status_code == 404
+    assert response.get_json() == {
+        "success": False,
+        "error": {
+            "code": "not_found",
+            "message": (
+                "La ressource interne demandée n'existe pas."
+            ),
+        },
+    }
+
+
+def test_invalid_internal_method_returns_json(
+    client,
+    internal_api_headers,
+):
+    """Retourne une erreur JSON pour une méthode interdite."""
+
+    response = client.post(
+        "/internal/stocks/products/12",
+        headers=internal_api_headers,
+    )
+
+    assert response.status_code == 405
+    assert response.get_json() == {
+        "success": False,
+        "error": {
+            "code": "method_not_allowed",
+            "message": (
+                "Cette méthode HTTP n'est pas autorisée."
+            ),
+        },
+    }
+
+
+def test_unexpected_internal_error_returns_json(
+    app_context,
+    client,
+    internal_api_headers,
+):
+    """Transforme une erreur interne inattendue en JSON."""
+
+    @app_context.get("/internal/stocks/test-error")
+    def internal_test_error():
+        """Lève volontairement une erreur pour le test."""
+
+        raise RuntimeError("Erreur volontaire")
+
+    # Flask propage normalement les exceptions en mode TESTING.
+    app_context.config["PROPAGATE_EXCEPTIONS"] = False
+
+    response = client.get(
+        "/internal/stocks/test-error",
+        headers=internal_api_headers,
+    )
+
+    assert response.status_code == 500
+    assert response.get_json() == {
+        "success": False,
+        "error": {
+            "code": "internal_error",
+            "message": (
+                "Une erreur interne empêche de traiter la requête."
+            ),
+        },
+    }

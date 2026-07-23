@@ -2,7 +2,7 @@
 
 import os
 
-from flask import Flask, render_template
+from flask import Flask, jsonify, render_template, request
 from sqlalchemy import select
 
 from app.extensions import (
@@ -17,6 +17,11 @@ from app.extensions import (
 PLACEHOLDER_SECRET_KEYS = {
     "your_flask_secret_key",
     "replace_with_a_random_secret",
+}
+# Valeurs d'exemple interdites pour la clé de l'API interne.
+PLACEHOLDER_INTERNAL_API_KEYS = {
+    "your_private_internal_api_key",
+    "replace_with_a_random_internal_api_key",
 }
 
 
@@ -65,6 +70,7 @@ def create_app(test_config=None):
     # Récupère les valeurs finales après la configuration de test.
     database_url = app.config.get("SQLALCHEMY_DATABASE_URI")
     secret_key = app.config.get("SECRET_KEY")
+    internal_api_key = app.config.get("INTERNAL_API_KEY")
 
     # Refuse de démarrer sans connexion PostgreSQL.
     if not database_url:
@@ -94,6 +100,31 @@ def create_app(test_config=None):
     if len(secret_key) < 32:
         raise RuntimeError(
             "La variable SECRET_KEY doit contenir "
+            "au moins 32 caractères."
+        )
+    # Refuse de démarrer sans clé pour l'API interne.
+    if not internal_api_key:
+        raise RuntimeError(
+            "La variable d'environnement INTERNAL_API_KEY est manquante."
+        )
+
+    # Refuse une clé interne qui n'est pas une chaîne.
+    if not isinstance(internal_api_key, str):
+        raise RuntimeError(
+            "La variable INTERNAL_API_KEY doit être une chaîne."
+        )
+
+    # Refuse les valeurs fictives présentes dans les exemples.
+    if internal_api_key in PLACEHOLDER_INTERNAL_API_KEYS:
+        raise RuntimeError(
+            "La variable INTERNAL_API_KEY utilise encore "
+            "une valeur d'exemple."
+        )
+
+    # Refuse une clé interne trop courte.
+    if len(internal_api_key) < 32:
+        raise RuntimeError(
+            "La variable INTERNAL_API_KEY doit contenir "
             "au moins 32 caractères."
         )
 
@@ -170,9 +201,77 @@ def create_app(test_config=None):
     # Enregistre l'API interne de consultation des stocks.
     app.register_blueprint(internal_api_bp)
 
+    def internal_error_response(code, message, status_code):
+        """Construit une erreur JSON pour l'API interne."""
+
+        return jsonify(
+            {
+                "success": False,
+                "error": {
+                    "code": code,
+                    "message": message,
+                },
+            }
+        ), status_code
+
+    def is_internal_request():
+        """Indique si la requête vise l'API interne."""
+
+        return request.path.startswith("/internal/")
+
     @app.errorhandler(403)
-    def forbidden(_error):
-        """Affiche une page personnalisée lors d'un accès interdit."""
+    def forbidden(error):
+        """Gère les accès interdits."""
+
+        if is_internal_request():
+            return internal_error_response(
+                "forbidden",
+                "Accès interdit à l'API interne.",
+                403,
+            )
+
         return render_template("errors/403.html"), 403
+
+    @app.errorhandler(404)
+    def not_found(error):
+        """Gère les ressources inexistantes."""
+
+        if is_internal_request():
+            return internal_error_response(
+                "not_found",
+                "La ressource interne demandée n'existe pas.",
+                404,
+            )
+
+        return error.get_response()
+
+    @app.errorhandler(405)
+    def method_not_allowed(error):
+        """Gère les méthodes HTTP non autorisées."""
+
+        if is_internal_request():
+            return internal_error_response(
+                "method_not_allowed",
+                "Cette méthode HTTP n'est pas autorisée.",
+                405,
+            )
+
+        return error.get_response()
+
+    @app.errorhandler(500)
+    def internal_server_error(error):
+        """Gère les erreurs internes inattendues."""
+
+        if is_internal_request():
+            # Répare une éventuelle transaction SQLAlchemy interrompue.
+            db.session.rollback()
+
+            return internal_error_response(
+                "internal_error",
+                "Une erreur interne empêche de traiter la requête.",
+                500,
+            )
+
+        return error.get_response()
 
     return app
