@@ -5,8 +5,16 @@ from app.extensions import db
 from app.models.branch import Branch
 
 
-class StockValidationError(ValueError):
+class StockError(ValueError):
+    """Erreur de base commune à toutes les erreurs de stock."""
+
+
+class StockValidationError(StockError):
     """Erreur levée quand une valeur de stock ou une branche est invalide."""
+
+
+class StockOperationError(StockError):
+    """Erreur levée quand l'enregistrement du stock échoue en base."""
 
 
 def validate_quantity(quantity: int) -> int:

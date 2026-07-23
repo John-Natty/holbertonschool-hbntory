@@ -4,10 +4,19 @@
 import pytest
 
 from app.services.stock_validation import (
+    StockError,
+    StockOperationError,
     StockValidationError,
     validate_amount,
     validate_quantity,
 )
+
+
+def test_les_erreurs_de_stock_partagent_une_base_commune():
+    """Les deux erreurs de stock héritent toutes les deux de StockError."""
+
+    assert issubclass(StockValidationError, StockError)
+    assert issubclass(StockOperationError, StockError)
 
 
 def test_validate_quantity_accepte_zero_et_positif():

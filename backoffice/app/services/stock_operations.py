@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Opérations de stock disponibles pour un common user."""
 
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+
 from app.extensions import db
 from app.models.stock import Stock
 from app.services.stock_validation import (
+    StockOperationError,
     StockValidationError,
     validate_amount,
     validate_branch,
@@ -63,7 +66,7 @@ def add_stock(branch_id: int, product_id: int, amount: int) -> Stock:
         # Incrémente le stock déjà présent.
         stock.quantity += amount
 
-    db.session.commit()
+    _commit_or_fail()
 
     return stock
 
@@ -92,7 +95,7 @@ def remove_stock(branch_id: int, product_id: int, amount: int) -> Stock:
     # Décrémente le stock.
     stock.quantity -= amount
 
-    db.session.commit()
+    _commit_or_fail()
 
     return stock
 
@@ -105,3 +108,27 @@ def _find_stock(branch_id: int, product_id: int) -> Stock | None:
         .filter_by(branch_id=branch_id, product_id=product_id)
         .first()
     )
+
+
+def _commit_or_fail() -> None:
+    """Enregistre la transaction en cours, ou l'annule si elle échoue."""
+
+    try:
+        db.session.commit()
+
+    except IntegrityError as error:
+        # Une contrainte de la base a refusé l'enregistrement.
+        db.session.rollback()
+
+        raise StockOperationError(
+            "Le stock vient d'être modifié par une autre opération. "
+            "Merci de réessayer."
+        ) from error
+
+    except SQLAlchemyError as error:
+        # Toute autre panne laisserait la session inutilisable.
+        db.session.rollback()
+
+        raise StockOperationError(
+            "L'enregistrement du stock a échoué."
+        ) from error
