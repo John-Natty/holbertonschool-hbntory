@@ -151,12 +151,13 @@ async def test_injected_service_returns_success(
     assert fake_service.request.question == "Question valide"
 
 
-async def test_openapi_exposes_health_and_query(
+async def test_openapi_exposes_health_ready_and_query(
     application: FastAPI,
 ):
-    """Documente les deux routes prévues pour cette phase."""
+    """Documente les trois routes prévues pour cette phase."""
 
     paths = application.openapi()["paths"]
 
     assert "get" in paths["/health"]
+    assert "get" in paths["/ready"]
     assert "post" in paths["/query"]

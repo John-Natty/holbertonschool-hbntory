@@ -4,15 +4,25 @@ import uvicorn
 from fastapi import FastAPI
 
 from app.api.routes import router
-from app.config import get_settings
+from app.clients.mcp_client import ProductMCPClient
+from app.config import Settings, get_settings
+from app.lifespan import MCPClientFactory, create_lifespan
 
 
-def create_app() -> FastAPI:
-    """Crée une application FastAPI sans connexion externe."""
+def create_app(
+    settings: Settings | None = None,
+    mcp_client_factory: MCPClientFactory = ProductMCPClient,
+) -> FastAPI:
+    """Crée l'application et injecte le lifespan du client MCP."""
 
+    resolved_settings = settings or get_settings()
     application = FastAPI(
         title="HBntory AI Service",
         version="0.1.0",
+        lifespan=create_lifespan(
+            resolved_settings,
+            mcp_client_factory,
+        ),
     )
     application.include_router(router)
 

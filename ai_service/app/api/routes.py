@@ -2,8 +2,16 @@
 
 from fastapi import APIRouter, Depends, Response, status
 
-from app.api.dependencies import get_query_service
-from app.models.health import HealthResponse
+from app.api.dependencies import (
+    get_mcp_client,
+    get_query_service,
+)
+from app.clients.mcp_client import ProductMCPClient
+from app.models.health import (
+    HealthResponse,
+    NotReadyResponse,
+    ReadyResponse,
+)
 from app.models.query import (
     ErrorResponse,
     QueryRequest,
@@ -24,6 +32,28 @@ async def health() -> HealthResponse:
     """Confirme que le processus du service IA fonctionne."""
 
     return HealthResponse()
+
+
+@router.get(
+    "/ready",
+    response_model=ReadyResponse | NotReadyResponse,
+    responses={
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "model": NotReadyResponse,
+        },
+    },
+)
+async def ready(
+    response: Response,
+    client: ProductMCPClient | None = Depends(get_mcp_client),
+) -> ReadyResponse | NotReadyResponse:
+    """Expose l'état courant du client sans tenter de reconnexion."""
+
+    if client is not None and client.is_ready:
+        return ReadyResponse()
+
+    response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return NotReadyResponse()
 
 
 @router.post(

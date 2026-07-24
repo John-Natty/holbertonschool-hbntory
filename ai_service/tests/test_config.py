@@ -10,6 +10,8 @@ CONFIGURATION_VARIABLES = {
     "AI_SERVICE_HOST",
     "AI_SERVICE_PORT",
     "MCP_SERVER_URL",
+    "MCP_REQUEST_TIMEOUT_SECONDS",
+    "MCP_MAX_CONCURRENT_CALLS",
 }
 
 
@@ -35,6 +37,8 @@ def test_settings_use_docker_compose_defaults(monkeypatch):
     assert str(settings.mcp_server_url) == (
         "http://product-mcp-server:8000/mcp"
     )
+    assert settings.mcp_request_timeout_seconds == 10.0
+    assert settings.mcp_max_concurrent_calls == 10
 
 
 def test_settings_read_environment(monkeypatch):
@@ -47,6 +51,14 @@ def test_settings_read_environment(monkeypatch):
         "MCP_SERVER_URL",
         "http://mcp.test:8100/mcp",
     )
+    monkeypatch.setenv(
+        "MCP_REQUEST_TIMEOUT_SECONDS",
+        "2.5",
+    )
+    monkeypatch.setenv(
+        "MCP_MAX_CONCURRENT_CALLS",
+        "4",
+    )
 
     settings = Settings()
 
@@ -55,6 +67,8 @@ def test_settings_read_environment(monkeypatch):
     assert str(settings.mcp_server_url) == (
         "http://mcp.test:8100/mcp"
     )
+    assert settings.mcp_request_timeout_seconds == 2.5
+    assert settings.mcp_max_concurrent_calls == 4
 
 
 def test_settings_reject_extra_field(monkeypatch):
@@ -73,6 +87,14 @@ def test_settings_reject_extra_field(monkeypatch):
         ("ai_service_port", 0),
         ("ai_service_port", 65536),
         ("mcp_server_url", "ftp://mcp.test/mcp"),
+        ("mcp_request_timeout_seconds", 0),
+        ("mcp_request_timeout_seconds", -1),
+        ("mcp_request_timeout_seconds", True),
+        ("mcp_request_timeout_seconds", float("inf")),
+        ("mcp_request_timeout_seconds", float("nan")),
+        ("mcp_max_concurrent_calls", 0),
+        ("mcp_max_concurrent_calls", -1),
+        ("mcp_max_concurrent_calls", True),
     ],
 )
 def test_settings_reject_invalid_values(
