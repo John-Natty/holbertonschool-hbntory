@@ -4,6 +4,7 @@
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 
 from clients.errors import (
     ExternalServiceResponseError,
@@ -12,6 +13,7 @@ from clients.errors import (
     InvalidClientParameterError,
     ResourceNotFoundError,
 )
+from schemas import ProductSchema
 
 
 class ProductAPIClient:
@@ -209,47 +211,27 @@ def _validate_product_page(
 def _validate_product(
     product: Any,
 ) -> dict[str, Any]:
-    """Valide les champs essentiels d'un produit."""
+    """Valide un produit avec le contrat Pydantic complet."""
 
     if not isinstance(product, dict):
         raise ExternalServiceResponseError(
             "Un produit retourné par l'API est invalide."
         )
 
-    product_id = product.get("id")
-    sku = product.get("sku")
-    name = product.get("name")
-    description = product.get("description")
-    category = product.get("category")
-    unit_price = product.get("unit_price")
-
-    _validate_response_identifier(product_id)
-
-    for field_name, value in (
-        ("sku", sku),
-        ("name", name),
-        ("category", category),
-    ):
-        if not isinstance(value, str) or not value.strip():
-            raise ExternalServiceResponseError(
-                f"Le champ {field_name} du produit est invalide."
-            )
-
-    if not isinstance(description, str):
-        raise ExternalServiceResponseError(
-            "Le champ description du produit est invalide."
+    try:
+        validated_product = ProductSchema.model_validate(
+            product
         )
 
-    if (
-        isinstance(unit_price, bool)
-        or not isinstance(unit_price, (int, float))
-        or unit_price < 0
-    ):
+    except ValidationError as error:
         raise ExternalServiceResponseError(
-            "Le champ unit_price du produit est invalide."
-        )
+            "Un produit retourné par l'API Produit "
+            "ne respecte pas le contrat attendu."
+        ) from error
 
-    return product
+    return validated_product.model_dump(
+        mode="json",
+    )
 
 
 def _validate_response_identifier(value: Any) -> int:

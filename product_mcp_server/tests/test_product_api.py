@@ -259,7 +259,7 @@ async def test_product_rejects_missing_required_field():
     async with create_test_client(handler) as client:
         with pytest.raises(
             ExternalServiceResponseError,
-            match="category",
+            match="contrat attendu",
         ):
             await client.get_product_details(1)
 
@@ -310,3 +310,57 @@ async def test_product_api_transforms_network_error():
     async with create_test_client(handler) as client:
         with pytest.raises(ExternalServiceUnavailableError):
             await client.list_products()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        (
+            "brand",
+            123,
+        ),
+        (
+            "currency",
+            "",
+        ),
+        (
+            "tags",
+            [
+                "valide",
+                42,
+            ],
+        ),
+        (
+            "updated_at",
+            "date-invalide",
+        ),
+        (
+            "supplier",
+            {
+                "id": "SUP-INCOMPLET",
+            },
+        ),
+    ],
+)
+async def test_product_rejects_invalid_complete_contract(
+    field_name,
+    invalid_value,
+):
+    """Refuse un produit qui enfreint le contrat Pydantic complet."""
+
+    invalid_product = sample_product()
+    invalid_product[field_name] = invalid_value
+
+    def handler(_request):
+        return httpx.Response(
+            200,
+            json=invalid_product,
+        )
+
+    async with create_test_client(handler) as client:
+        with pytest.raises(
+            ExternalServiceResponseError,
+            match="contrat attendu",
+        ):
+            await client.get_product_details(1)

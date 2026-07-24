@@ -11,6 +11,7 @@ from mcp.server.session import ServerSession
 from clients.backoffice_api import BackofficeAPIClient
 from clients.product_api import ProductAPIClient
 from config import Settings, load_settings
+from mcp_compat import enforce_strict_tool_arguments
 from schemas import (
     ListProductsResponse,
     PageLimit,
@@ -47,6 +48,10 @@ def create_server(
     """Crée et configure le serveur MCP HBntory."""
 
     resolved_settings = settings or load_settings()
+
+    # Doit être exécuté avant la création des modèles
+    # d'arguments générés par les décorateurs MCP.
+    enforce_strict_tool_arguments()
 
     @asynccontextmanager
     async def app_lifespan(

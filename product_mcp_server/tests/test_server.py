@@ -593,3 +593,170 @@ async def test_empty_shopping_list_is_rejected_by_mcp(
 
     assert result.isError is True
     assert result.structuredContent is None
+
+
+@pytest.mark.asyncio
+async def test_malformed_product_returns_structured_mcp_error(
+    monkeypatch,
+    settings: Settings,
+):
+    """Transforme un produit malformé en erreur MCP structurée."""
+
+    import httpx
+
+    from clients.product_api import ProductAPIClient
+
+    class MalformedProductAPIClient(ProductAPIClient):
+        """Client Produit réel connecté à une réponse HTTP malformée."""
+
+        def __init__(self, base_url: str) -> None:
+            """Configure un faux transport HTTP sans réseau."""
+
+            def handler(_request):
+                malformed_product = {
+                    **PRODUCT,
+                    "brand": 123,
+                }
+
+                return httpx.Response(
+                    200,
+                    json=malformed_product,
+                )
+
+            transport = httpx.MockTransport(handler)
+
+            self._mock_http_client = httpx.AsyncClient(
+                transport=transport,
+            )
+
+            super().__init__(
+                base_url,
+                http_client=self._mock_http_client,
+            )
+
+        async def aclose(self) -> None:
+            """Ferme le faux client HTTP."""
+
+            await self._mock_http_client.aclose()
+
+    monkeypatch.setattr(
+        server_module,
+        "ProductAPIClient",
+        MalformedProductAPIClient,
+    )
+
+    mcp = server_module.create_server(settings)
+
+    async with create_connected_server_and_client_session(
+        mcp,
+        raise_exceptions=True,
+    ) as session:
+        result = await session.call_tool(
+            "get_product_details",
+            {
+                "product_id": 12,
+            },
+        )
+
+    assert result.isError is False
+    assert result.structuredContent is not None
+
+    payload = result.structuredContent["result"]
+
+    assert payload == {
+        "success": False,
+        "error": {
+            "code": "invalid_service_response",
+            "message": (
+                "Un produit retourné par l'API Produit "
+                "ne respecte pas le contrat attendu."
+            ),
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_root_input_schemas_are_strict(mcp_server):
+    """Interdit les propriétés supplémentaires à la racine."""
+
+    tools = await get_registered_tools(mcp_server)
+
+    expected_tool_names = {
+        "list_products",
+        "get_product_details",
+        "get_stock_by_product",
+        "get_stock_by_branch",
+        "check_shopping_list",
+    }
+
+    for tool_name in expected_tool_names:
+        input_schema = tools[tool_name].inputSchema
+
+        assert input_schema["additionalProperties"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        (
+            "list_products",
+            {
+                "limit": 10,
+                "offset": 0,
+                "unexpected": 1,
+            },
+        ),
+        (
+            "get_product_details",
+            {
+                "product_id": 12,
+                "unexpected": 1,
+            },
+        ),
+        (
+            "get_stock_by_product",
+            {
+                "product_id": 12,
+                "unexpected": 1,
+            },
+        ),
+        (
+            "get_stock_by_branch",
+            {
+                "branch_id": 1,
+                "unexpected": 1,
+            },
+        ),
+        (
+            "check_shopping_list",
+            {
+                "items": [
+                    {
+                        "product_id": 12,
+                        "quantity": 1,
+                    },
+                ],
+                "unexpected": 1,
+            },
+        ),
+    ],
+)
+async def test_tools_reject_unknown_root_argument(
+    mcp_server,
+    tool_name,
+    arguments,
+):
+    """Refuse un argument inconnu avant l'exécution de l'outil."""
+
+    async with create_connected_server_and_client_session(
+        mcp_server,
+        raise_exceptions=True,
+    ) as session:
+        result = await session.call_tool(
+            tool_name,
+            arguments,
+        )
+
+    assert result.isError is True
+    assert result.structuredContent is None
