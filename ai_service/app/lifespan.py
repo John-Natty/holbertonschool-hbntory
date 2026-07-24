@@ -12,6 +12,10 @@ from fastapi import FastAPI
 from app.clients.mcp_client import ProductMCPClient
 from app.config import Settings
 from app.errors import MCPClientError
+from app.services.answer_builder import AnswerBuilder
+from app.services.intent_router import RuleBasedIntentRouter
+from app.services.orchestrator import QueryOrchestrator
+from app.services.query_service import MCPQueryService
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +55,15 @@ def create_lifespan(
                 logger.warning(
                     "Le serveur MCP n'est pas disponible au démarrage."
                 )
+
+            orchestrator = QueryOrchestrator(
+                intent_router=RuleBasedIntentRouter(),
+                client=client,
+                answer_builder=AnswerBuilder(),
+            )
+            application.state.query_service = MCPQueryService(
+                orchestrator
+            )
 
             yield
         finally:

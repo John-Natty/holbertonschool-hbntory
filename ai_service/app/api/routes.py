@@ -1,5 +1,7 @@
 """Routes publiques du service IA HBntory."""
 
+import logging
+
 from fastapi import APIRouter, Depends, Response, status
 
 from app.api.dependencies import (
@@ -17,10 +19,13 @@ from app.models.query import (
     QueryRequest,
     QueryResponse,
 )
+from app.services.answer_builder import AnswerBuilder
 from app.services.query_service import QueryService
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+_answer_builder = AnswerBuilder()
 
 
 @router.get(
@@ -60,7 +65,22 @@ async def ready(
     "/query",
     response_model=QueryResponse,
     responses={
+        status.HTTP_404_NOT_FOUND: {
+            "model": ErrorResponse,
+        },
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {
+            "model": ErrorResponse,
+        },
+        status.HTTP_502_BAD_GATEWAY: {
+            "model": ErrorResponse,
+        },
         status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "model": ErrorResponse,
+        },
+        status.HTTP_504_GATEWAY_TIMEOUT: {
+            "model": ErrorResponse,
+        },
+        status.HTTP_500_INTERNAL_SERVER_ERROR: {
             "model": ErrorResponse,
         },
     },
@@ -72,7 +92,15 @@ async def query(
 ) -> QueryResponse:
     """Valide une question et la transmet au service injecté."""
 
-    result = await service.handle(request)
+    try:
+        result = await service.handle(request)
+    except Exception:
+        logger.error(
+            "Une erreur inattendue a interrompu POST /query."
+        )
+        result = _answer_builder.error(
+            "internal_error"
+        )
 
     if isinstance(result, ErrorResponse):
         response.status_code = _error_status_code(result)

@@ -1,6 +1,6 @@
-"""Abstraction temporaire du traitement des questions."""
+"""Services de traitement des questions publiques."""
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from app.models.query import (
     ErrorDetail,
@@ -9,9 +9,12 @@ from app.models.query import (
     QueryResponse,
 )
 
+if TYPE_CHECKING:
+    from app.services.orchestrator import QueryOrchestrator
+
 
 class QueryService(Protocol):
-    """Contrat asynchrone du futur orchestrateur de requêtes."""
+    """Contrat asynchrone du traitement d'une requête."""
 
     async def handle(
         self,
@@ -22,8 +25,28 @@ class QueryService(Protocol):
         ...
 
 
+class MCPQueryService:
+    """Transmet une requête validée à l'orchestrateur déterministe."""
+
+    def __init__(
+        self,
+        orchestrator: "QueryOrchestrator",
+    ) -> None:
+        """Injecte l'orchestrateur partagé du lifespan."""
+
+        self._orchestrator = orchestrator
+
+    async def handle(
+        self,
+        request: QueryRequest,
+    ) -> QueryResponse:
+        """Retourne la réponse construite depuis les données MCP."""
+
+        return await self._orchestrator.handle(request.question)
+
+
 class UnavailableQueryService:
-    """Signale explicitement que le client MCP n'existe pas encore."""
+    """Signale explicitement l'absence du service partagé."""
 
     async def handle(
         self,

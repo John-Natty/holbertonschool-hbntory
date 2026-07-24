@@ -14,10 +14,21 @@ from app.services.query_service import (
 _query_service = UnavailableQueryService()
 
 
-async def get_query_service() -> QueryService:
-    """Retourne le service de requête utilisé par l'API."""
+async def get_query_service(
+    request: Request,
+) -> QueryService:
+    """Lit le service partagé, avec un fallback contrôlé."""
 
-    return _query_service
+    service = getattr(
+        request.app.state,
+        "query_service",
+        None,
+    )
+
+    if service is None:
+        return _query_service
+
+    return cast(QueryService, service)
 
 
 async def get_mcp_client(

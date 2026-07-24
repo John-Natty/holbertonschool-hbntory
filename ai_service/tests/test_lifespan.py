@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from app.config import Settings
 from app.errors import MCPConnectionError
 from app.main import create_app
+from app.services.query_service import MCPQueryService
 
 
 pytestmark = pytest.mark.asyncio
@@ -118,6 +119,10 @@ async def test_lifespan_builds_connects_and_closes_once() -> None:
 
     async with application.router.lifespan_context(application):
         assert application.state.mcp_client is lifecycle_client
+        assert isinstance(
+            application.state.query_service,
+            MCPQueryService,
+        )
         assert lifecycle_client.connect_count == 1
         assert lifecycle_client.close_count == 0
         assert factory.calls == [
@@ -190,10 +195,12 @@ async def test_expected_connection_failure_keeps_http_available() -> None:
     assert lifecycle_client.close_count == 1
 
 
-async def test_query_remains_disconnected_from_mcp_orchestration() -> None:
-    """Conserve UnavailableQueryService malgré un client MCP prêt."""
+async def test_query_returns_503_when_shared_client_is_not_ready() -> None:
+    """Retourne une indisponibilité avant tout appel MCP."""
 
-    lifecycle_client = FakeLifecycleClient()
+    lifecycle_client = FakeLifecycleClient(
+        ready_after_connect=False
+    )
     application = create_app(
         settings=create_test_settings(),
         mcp_client_factory=FakeClientFactory(lifecycle_client),
