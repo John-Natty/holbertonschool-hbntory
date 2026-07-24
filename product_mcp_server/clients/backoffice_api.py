@@ -118,6 +118,10 @@ class BackofficeAPIClient:
         """Retourne les branches pouvant satisfaire une liste d'achats."""
 
         validated_items = _validate_requested_items(items)
+        expected_quantities = {
+            item["product_id"]: item["quantity"]
+            for item in validated_items
+        }
 
         data = await self._request_json(
             "POST",
@@ -136,7 +140,10 @@ class BackofficeAPIClient:
 
         return {
             "matching_branches": [
-                _validate_matching_branch(branch)
+                _validate_matching_branch(
+                    branch,
+                    expected_quantities,
+                )
                 for branch in matching_branches
             ],
         }
@@ -314,6 +321,7 @@ def _validate_stock(stock: Any) -> dict[str, int]:
 
 def _validate_matching_branch(
     branch: Any,
+    expected_quantities: dict[int, int],
 ) -> dict[str, Any]:
     """Valide une branche satisfaisant une liste d'achats."""
 
@@ -338,13 +346,54 @@ def _validate_matching_branch(
             "Le champ items d'une branche doit être une liste."
         )
 
+    validated_items = []
+    returned_product_ids = set()
+
+    for item in items:
+        validated_item = _validate_matching_item(item)
+        product_id = validated_item["product_id"]
+
+        if product_id in returned_product_ids:
+            raise ExternalServiceResponseError(
+                "Une branche correspondante contient "
+                "un produit dupliqué."
+            )
+
+        if product_id not in expected_quantities:
+            raise ExternalServiceResponseError(
+                "Une branche correspondante contient "
+                "un produit qui n'a pas été demandé."
+            )
+
+        expected_quantity = expected_quantities[product_id]
+
+        if (
+            validated_item["requested_quantity"]
+            != expected_quantity
+        ):
+            raise ExternalServiceResponseError(
+                "La quantité demandée retournée par le Backoffice "
+                "ne correspond pas à la liste envoyée."
+            )
+
+        returned_product_ids.add(product_id)
+        validated_items.append(validated_item)
+
+    missing_product_ids = (
+        set(expected_quantities)
+        - returned_product_ids
+    )
+
+    if missing_product_ids:
+        raise ExternalServiceResponseError(
+            "Une branche correspondante ne contient pas "
+            "tous les produits demandés."
+        )
+
     return {
         "branch_id": branch_id,
         "branch_name": branch_name,
-        "items": [
-            _validate_matching_item(item)
-            for item in items
-        ],
+        "items": validated_items,
     }
 
 
@@ -386,14 +435,15 @@ def _validate_matching_item(item: Any) -> dict[str, int]:
 def _validate_requested_items(
     items: Any,
 ) -> list[dict[str, int]]:
-    """Valide une liste d'achats avant son envoi."""
+    """Valide et normalise une liste d'achats avant son envoi."""
 
     if not isinstance(items, list) or not items:
         raise InvalidClientParameterError(
             "items doit être une liste non vide."
         )
 
-    validated_items = []
+    quantities_by_product = {}
+    product_order = []
 
     for item in items:
         if not isinstance(item, dict):
@@ -413,14 +463,19 @@ def _validate_requested_items(
             "quantity",
         )
 
-        validated_items.append(
-            {
-                "product_id": product_id,
-                "quantity": quantity,
-            }
-        )
+        if product_id not in quantities_by_product:
+            product_order.append(product_id)
+            quantities_by_product[product_id] = 0
 
-    return validated_items
+        quantities_by_product[product_id] += quantity
+
+    return [
+        {
+            "product_id": product_id,
+            "quantity": quantities_by_product[product_id],
+        }
+        for product_id in product_order
+    ]
 
 
 def _validate_positive_identifier(

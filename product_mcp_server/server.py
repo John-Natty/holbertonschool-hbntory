@@ -4,7 +4,6 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSession
@@ -12,6 +11,17 @@ from mcp.server.session import ServerSession
 from clients.backoffice_api import BackofficeAPIClient
 from clients.product_api import ProductAPIClient
 from config import Settings, load_settings
+from schemas import (
+    ListProductsResponse,
+    PageLimit,
+    PageOffset,
+    ProductDetailsResponse,
+    ShoppingListItems,
+    ShoppingListResponse,
+    StockByBranchResponse,
+    StockByProductResponse,
+    StrictPositiveInt,
+)
 from tools.product_tools import (
     get_product_details_tool,
     list_products_tool,
@@ -80,9 +90,9 @@ def create_server(
     @mcp.tool()
     async def list_products(
         ctx: Context[ServerSession, AppContext],
-        limit: int = 20,
-        offset: int = 0,
-    ) -> dict[str, Any]:
+        limit: PageLimit = 20,
+        offset: PageOffset = 0,
+    ) -> ListProductsResponse:
         """Liste une page de produits du catalogue externe."""
 
         app_context = ctx.request_context.lifespan_context
@@ -96,8 +106,8 @@ def create_server(
     @mcp.tool()
     async def get_product_details(
         ctx: Context[ServerSession, AppContext],
-        product_id: int,
-    ) -> dict[str, Any]:
+        product_id: StrictPositiveInt,
+    ) -> ProductDetailsResponse:
         """Retourne les informations détaillées d'un produit."""
 
         app_context = ctx.request_context.lifespan_context
@@ -110,8 +120,8 @@ def create_server(
     @mcp.tool()
     async def get_stock_by_product(
         ctx: Context[ServerSession, AppContext],
-        product_id: int,
-    ) -> dict[str, Any]:
+        product_id: StrictPositiveInt,
+    ) -> StockByProductResponse:
         """Retourne les branches possédant un produit en stock."""
 
         app_context = ctx.request_context.lifespan_context
@@ -124,8 +134,8 @@ def create_server(
     @mcp.tool()
     async def get_stock_by_branch(
         ctx: Context[ServerSession, AppContext],
-        branch_id: int,
-    ) -> dict[str, Any]:
+        branch_id: StrictPositiveInt,
+    ) -> StockByBranchResponse:
         """Retourne les produits disponibles dans une branche."""
 
         app_context = ctx.request_context.lifespan_context
@@ -138,15 +148,20 @@ def create_server(
     @mcp.tool()
     async def check_shopping_list(
         ctx: Context[ServerSession, AppContext],
-        items: list[dict[str, int]],
-    ) -> dict[str, Any]:
+        items: ShoppingListItems,
+    ) -> ShoppingListResponse:
         """Retourne les branches pouvant satisfaire une liste d'achats."""
 
         app_context = ctx.request_context.lifespan_context
 
+        serialized_items = [
+            item.model_dump()
+            for item in items
+        ]
+
         return await check_shopping_list_tool(
             app_context.backoffice_client,
-            items=items,
+            items=serialized_items,
         )
 
     return mcp

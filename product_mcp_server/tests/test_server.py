@@ -18,7 +18,19 @@ PRODUCT = {
     "name": "Produit de test",
     "description": "Description du produit.",
     "category": "Tests",
+    "brand": "HBntory",
+    "supplier_id": "SUP-TEST-001",
+    "supplier_name": "Fournisseur de test",
     "unit_price": 49.99,
+    "currency": "EUR",
+    "discontinued": False,
+    "weight_kg": 1.25,
+    "tags": [
+        "test",
+        "mcp",
+    ],
+    "updated_at": "2026-07-24T12:00:00Z",
+    "supplier": None,
 }
 
 
@@ -189,12 +201,24 @@ def mcp_server(
 
 
 def get_structured_content(result) -> dict[str, Any]:
-    """Extrait et valide le résultat structuré d'un outil MCP."""
+    """Extrait et valide le résultat métier d'un outil MCP."""
 
     assert result.isError is False
     assert result.structuredContent is not None
 
-    return result.structuredContent
+    structured_content = result.structuredContent
+
+    assert isinstance(structured_content, dict)
+
+    # FastMCP enveloppe une union de modèles sous la clé result.
+    if set(structured_content) == {"result"}:
+        tool_result = structured_content["result"]
+
+        assert isinstance(tool_result, dict)
+
+        return tool_result
+
+    return structured_content
 
 
 @pytest.mark.asyncio
@@ -404,3 +428,168 @@ async def test_clients_are_closed_when_server_stops(mcp_server):
 
     assert product_client.closed is True
     assert backoffice_client.closed is True
+
+
+async def get_registered_tools(mcp_server) -> dict:
+    """Retourne les outils enregistrés, indexés par leur nom."""
+
+    async with create_connected_server_and_client_session(
+        mcp_server,
+        raise_exceptions=True,
+    ) as session:
+        result = await session.list_tools()
+
+    return {
+        tool.name: tool
+        for tool in result.tools
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_products_input_schema_is_constrained(
+    mcp_server,
+):
+    """Expose les contraintes de pagination dans le schéma MCP."""
+
+    tools = await get_registered_tools(mcp_server)
+    schema = tools["list_products"].inputSchema
+
+    limit_schema = schema["properties"]["limit"]
+    offset_schema = schema["properties"]["offset"]
+
+    assert limit_schema["minimum"] == 1
+    assert limit_schema["maximum"] == 100
+    assert limit_schema["type"] == "integer"
+
+    assert offset_schema["minimum"] == 0
+    assert offset_schema["type"] == "integer"
+
+
+@pytest.mark.asyncio
+async def test_identifiers_are_positive_in_mcp_schemas(
+    mcp_server,
+):
+    """Expose des identifiants strictement positifs."""
+
+    tools = await get_registered_tools(mcp_server)
+
+    product_schema = tools[
+        "get_product_details"
+    ].inputSchema["properties"]["product_id"]
+
+    branch_schema = tools[
+        "get_stock_by_branch"
+    ].inputSchema["properties"]["branch_id"]
+
+    assert product_schema["exclusiveMinimum"] == 0
+    assert product_schema["type"] == "integer"
+
+    assert branch_schema["exclusiveMinimum"] == 0
+    assert branch_schema["type"] == "integer"
+
+
+@pytest.mark.asyncio
+async def test_shopping_list_input_schema_is_strict(
+    mcp_server,
+):
+    """Décrit précisément chaque article de la liste d'achats."""
+
+    tools = await get_registered_tools(mcp_server)
+    schema = tools["check_shopping_list"].inputSchema
+
+    items_schema = schema["properties"]["items"]
+
+    assert items_schema["type"] == "array"
+    assert items_schema["minItems"] == 1
+
+    item_reference = items_schema["items"]["$ref"]
+
+    assert item_reference == (
+        "#/$defs/ShoppingListItemInput"
+    )
+
+    item_schema = schema["$defs"][
+        "ShoppingListItemInput"
+    ]
+
+    assert item_schema["additionalProperties"] is False
+    assert set(item_schema["required"]) == {
+        "product_id",
+        "quantity",
+    }
+
+    assert (
+        item_schema["properties"]["product_id"][
+            "exclusiveMinimum"
+        ]
+        == 0
+    )
+
+    assert (
+        item_schema["properties"]["quantity"][
+            "exclusiveMinimum"
+        ]
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_shopping_list_output_schema_is_explicit(
+    mcp_server,
+):
+    """Expose une sortie structurée et fermée."""
+
+    tools = await get_registered_tools(mcp_server)
+    schema = tools["check_shopping_list"].outputSchema
+
+    success_schema = schema["$defs"][
+        "ShoppingListSuccess"
+    ]
+    branch_schema = schema["$defs"][
+        "MatchingBranchSchema"
+    ]
+    item_schema = schema["$defs"][
+        "MatchingItemSchema"
+    ]
+
+    assert success_schema["additionalProperties"] is False
+    assert branch_schema["additionalProperties"] is False
+    assert item_schema["additionalProperties"] is False
+
+    assert set(success_schema["required"]) == {
+        "success",
+        "matching_branches",
+    }
+
+    assert set(branch_schema["required"]) == {
+        "branch_id",
+        "branch_name",
+        "items",
+    }
+
+    assert set(item_schema["required"]) == {
+        "product_id",
+        "requested_quantity",
+        "available_quantity",
+    }
+
+
+@pytest.mark.asyncio
+async def test_empty_shopping_list_is_rejected_by_mcp(
+    mcp_server,
+):
+    """Refuse une liste vide avant l'appel au Backoffice."""
+
+    async with create_connected_server_and_client_session(
+        mcp_server,
+        raise_exceptions=True,
+    ) as session:
+        result = await session.call_tool(
+            "check_shopping_list",
+            {
+                "items": [],
+            },
+        )
+
+    assert result.isError is True
+    assert result.structuredContent is None

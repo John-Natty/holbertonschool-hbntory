@@ -571,3 +571,311 @@ async def test_backoffice_network_error_is_transformed():
     async with create_test_client(handler) as client:
         with pytest.raises(ExternalServiceUnavailableError):
             await client.get_stock_by_product(12)
+
+
+@pytest.mark.asyncio
+async def test_shopping_list_rejects_missing_requested_product():
+    """Refuse une branche qui omet un produit demandé."""
+
+    def handler(_request):
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "matching_branches": [
+                    {
+                        "branch_id": 1,
+                        "branch_name": "Toulouse",
+                        "items": [
+                            {
+                                "product_id": 12,
+                                "requested_quantity": 2,
+                                "available_quantity": 8,
+                            },
+                        ],
+                    },
+                ],
+                "error": None,
+            },
+        )
+
+    async with create_test_client(handler) as client:
+        with pytest.raises(
+            ExternalServiceResponseError,
+            match="tous les produits demandés",
+        ):
+            await client.check_shopping_list(
+                [
+                    {
+                        "product_id": 12,
+                        "quantity": 2,
+                    },
+                    {
+                        "product_id": 25,
+                        "quantity": 3,
+                    },
+                ]
+            )
+
+
+@pytest.mark.asyncio
+async def test_shopping_list_rejects_added_product():
+    """Refuse une branche contenant un produit supplémentaire."""
+
+    def handler(_request):
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "matching_branches": [
+                    {
+                        "branch_id": 1,
+                        "branch_name": "Toulouse",
+                        "items": [
+                            {
+                                "product_id": 12,
+                                "requested_quantity": 2,
+                                "available_quantity": 8,
+                            },
+                            {
+                                "product_id": 25,
+                                "requested_quantity": 3,
+                                "available_quantity": 5,
+                            },
+                            {
+                                "product_id": 99,
+                                "requested_quantity": 1,
+                                "available_quantity": 4,
+                            },
+                        ],
+                    },
+                ],
+                "error": None,
+            },
+        )
+
+    async with create_test_client(handler) as client:
+        with pytest.raises(
+            ExternalServiceResponseError,
+            match="n'a pas été demandé",
+        ):
+            await client.check_shopping_list(
+                [
+                    {
+                        "product_id": 12,
+                        "quantity": 2,
+                    },
+                    {
+                        "product_id": 25,
+                        "quantity": 3,
+                    },
+                ]
+            )
+
+
+@pytest.mark.asyncio
+async def test_shopping_list_rejects_substituted_product():
+    """Refuse un produit retourné à la place d'un produit demandé."""
+
+    def handler(_request):
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "matching_branches": [
+                    {
+                        "branch_id": 1,
+                        "branch_name": "Toulouse",
+                        "items": [
+                            {
+                                "product_id": 12,
+                                "requested_quantity": 2,
+                                "available_quantity": 8,
+                            },
+                            {
+                                "product_id": 99,
+                                "requested_quantity": 3,
+                                "available_quantity": 6,
+                            },
+                        ],
+                    },
+                ],
+                "error": None,
+            },
+        )
+
+    async with create_test_client(handler) as client:
+        with pytest.raises(
+            ExternalServiceResponseError,
+            match="n'a pas été demandé",
+        ):
+            await client.check_shopping_list(
+                [
+                    {
+                        "product_id": 12,
+                        "quantity": 2,
+                    },
+                    {
+                        "product_id": 25,
+                        "quantity": 3,
+                    },
+                ]
+            )
+
+
+@pytest.mark.asyncio
+async def test_shopping_list_rejects_duplicated_product():
+    """Refuse un produit présent plusieurs fois dans une branche."""
+
+    def handler(_request):
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "matching_branches": [
+                    {
+                        "branch_id": 1,
+                        "branch_name": "Toulouse",
+                        "items": [
+                            {
+                                "product_id": 12,
+                                "requested_quantity": 2,
+                                "available_quantity": 8,
+                            },
+                            {
+                                "product_id": 12,
+                                "requested_quantity": 2,
+                                "available_quantity": 8,
+                            },
+                        ],
+                    },
+                ],
+                "error": None,
+            },
+        )
+
+    async with create_test_client(handler) as client:
+        with pytest.raises(
+            ExternalServiceResponseError,
+            match="produit dupliqué",
+        ):
+            await client.check_shopping_list(
+                [
+                    {
+                        "product_id": 12,
+                        "quantity": 2,
+                    },
+                ]
+            )
+
+
+@pytest.mark.asyncio
+async def test_shopping_list_rejects_changed_requested_quantity():
+    """Refuse une quantité différente de celle réellement demandée."""
+
+    def handler(_request):
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "matching_branches": [
+                    {
+                        "branch_id": 1,
+                        "branch_name": "Toulouse",
+                        "items": [
+                            {
+                                "product_id": 12,
+                                "requested_quantity": 1,
+                                "available_quantity": 8,
+                            },
+                        ],
+                    },
+                ],
+                "error": None,
+            },
+        )
+
+    async with create_test_client(handler) as client:
+        with pytest.raises(
+            ExternalServiceResponseError,
+            match="ne correspond pas",
+        ):
+            await client.check_shopping_list(
+                [
+                    {
+                        "product_id": 12,
+                        "quantity": 3,
+                    },
+                ]
+            )
+
+
+@pytest.mark.asyncio
+async def test_shopping_list_normalizes_duplicate_requests():
+    """Additionne les quantités demandées pour un même produit."""
+
+    def handler(request):
+        sent_data = json.loads(request.content)
+
+        assert sent_data == {
+            "items": [
+                {
+                    "product_id": 12,
+                    "quantity": 5,
+                },
+                {
+                    "product_id": 25,
+                    "quantity": 1,
+                },
+            ],
+        }
+
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "matching_branches": [
+                    {
+                        "branch_id": 1,
+                        "branch_name": "Toulouse",
+                        "items": [
+                            {
+                                "product_id": 12,
+                                "requested_quantity": 5,
+                                "available_quantity": 8,
+                            },
+                            {
+                                "product_id": 25,
+                                "requested_quantity": 1,
+                                "available_quantity": 4,
+                            },
+                        ],
+                    },
+                ],
+                "error": None,
+            },
+        )
+
+    async with create_test_client(handler) as client:
+        result = await client.check_shopping_list(
+            [
+                {
+                    "product_id": 12,
+                    "quantity": 2,
+                },
+                {
+                    "product_id": 12,
+                    "quantity": 3,
+                },
+                {
+                    "product_id": 25,
+                    "quantity": 1,
+                },
+            ]
+        )
+
+    assert result["matching_branches"][0]["items"][0] == {
+        "product_id": 12,
+        "requested_quantity": 5,
+        "available_quantity": 8,
+    }
