@@ -1,0 +1,33 @@
+# Environnement virtuel local
+.venv/
+venv/
+
+# Variables d'environnement et secrets
+.env
+.env.*
+
+# Caches Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Rapports de tests
+.coverage
+coverage.xml
+htmlcov/
+
+# Git
+.git/
+.gitignore
+
+# Fichiers des éditeurs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Fichiers système
+.DS_Store
+Thumbs.db
