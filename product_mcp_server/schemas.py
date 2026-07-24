@@ -2,10 +2,11 @@
 """Schémas d'entrée et de sortie des outils MCP HBntory."""
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     StrictBool,
@@ -32,7 +33,19 @@ PageOffset = StrictNonNegativeInt
 
 NonNegativeFiniteFloat = Annotated[
     float,
-    Field(ge=0, allow_inf_nan=False),
+    Field(
+        strict=True,
+        ge=0,
+        allow_inf_nan=False,
+    ),
+]
+
+StrictFiniteFloat = Annotated[
+    float,
+    Field(
+        strict=True,
+        allow_inf_nan=False,
+    ),
 ]
 
 NonEmptyString = Annotated[
@@ -41,6 +54,23 @@ NonEmptyString = Annotated[
         strip_whitespace=True,
         min_length=1,
     ),
+]
+
+
+def _require_datetime_string(value: Any) -> Any:
+    """Refuse toute conversion implicite d'un nombre en date."""
+
+    if not isinstance(value, str):
+        raise ValueError(
+            "La date doit être fournie sous forme de chaîne ISO 8601."
+        )
+
+    return value
+
+
+ISODateTimeString = Annotated[
+    datetime,
+    BeforeValidator(_require_datetime_string),
 ]
 
 
@@ -73,7 +103,7 @@ class SupplierSchema(StrictSchema):
     contact_email: NonEmptyString
     country: NonEmptyString
     lead_time_days: StrictNonNegativeInt
-    reliability_score: float
+    reliability_score: StrictFiniteFloat
 
 
 class ProductSchema(StrictSchema):
@@ -92,7 +122,7 @@ class ProductSchema(StrictSchema):
     discontinued: StrictBool
     weight_kg: NonNegativeFiniteFloat
     tags: list[NonEmptyString]
-    updated_at: datetime
+    updated_at: ISODateTimeString
     supplier: SupplierSchema | None = None
 
 

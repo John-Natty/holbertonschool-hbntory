@@ -1,15 +1,28 @@
 #!/usr/bin/env python3
 """Tests d'intégration du serveur MCP HBntory."""
 
+import json
 from typing import Any
 
+import httpx
 import pytest
 from mcp.shared.memory import (
     create_connected_server_and_client_session,
 )
 
 import server as server_module
+from clients.product_api import ProductAPIClient
 from config import Settings
+
+
+SUPPLIER = {
+    "id": "SUP-TEST-001",
+    "name": "Fournisseur de test",
+    "contact_email": "supplier@example.test",
+    "country": "France",
+    "lead_time_days": 2,
+    "reliability_score": 0.99,
+}
 
 
 PRODUCT = {
@@ -32,6 +45,48 @@ PRODUCT = {
     "updated_at": "2026-07-24T12:00:00Z",
     "supplier": None,
 }
+
+
+def create_mocked_product_client(
+    product_payload: dict[str, Any],
+):
+    """Crée un vrai client Produit relié à un transport HTTP mocké."""
+
+    class MockedProductAPIClient(ProductAPIClient):
+        """Valide un payload contrôlé sans utiliser le réseau."""
+
+        def __init__(self, base_url: str) -> None:
+            """Configure un transport retournant le produit fourni."""
+
+            def handler(_request):
+                return httpx.Response(
+                    200,
+                    content=json.dumps(
+                        product_payload,
+                        allow_nan=True,
+                    ).encode(),
+                    headers={
+                        "content-type": "application/json",
+                    },
+                )
+
+            transport = httpx.MockTransport(handler)
+
+            self._mock_http_client = httpx.AsyncClient(
+                transport=transport,
+            )
+
+            super().__init__(
+                base_url,
+                http_client=self._mock_http_client,
+            )
+
+        async def aclose(self) -> None:
+            """Ferme le client HTTP mocké."""
+
+            await self._mock_http_client.aclose()
+
+    return MockedProductAPIClient
 
 
 class FakeProductAPIClient:
@@ -209,16 +264,13 @@ def get_structured_content(result) -> dict[str, Any]:
     structured_content = result.structuredContent
 
     assert isinstance(structured_content, dict)
+    assert set(structured_content) == {"result"}
 
-    # FastMCP enveloppe une union de modèles sous la clé result.
-    if set(structured_content) == {"result"}:
-        tool_result = structured_content["result"]
+    tool_result = structured_content["result"]
 
-        assert isinstance(tool_result, dict)
+    assert isinstance(tool_result, dict)
 
-        return tool_result
-
-    return structured_content
+    return tool_result
 
 
 @pytest.mark.asyncio
@@ -575,6 +627,30 @@ async def test_shopping_list_output_schema_is_explicit(
 
 
 @pytest.mark.asyncio
+async def test_all_output_schemas_require_result_envelope(
+    mcp_server,
+):
+    """Annonce l'enveloppe result obligatoire sur les cinq outils."""
+
+    tools = await get_registered_tools(mcp_server)
+
+    expected_tool_names = {
+        "list_products",
+        "get_product_details",
+        "get_stock_by_product",
+        "get_stock_by_branch",
+        "check_shopping_list",
+    }
+
+    for tool_name in expected_tool_names:
+        output_schema = tools[tool_name].outputSchema
+
+        assert output_schema["type"] == "object"
+        assert set(output_schema["properties"]) == {"result"}
+        assert set(output_schema["required"]) == {"result"}
+
+
+@pytest.mark.asyncio
 async def test_empty_shopping_list_is_rejected_by_mcp(
     mcp_server,
 ):
@@ -596,53 +672,69 @@ async def test_empty_shopping_list_is_rejected_by_mcp(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        pytest.param(
+            "brand",
+            123,
+            id="invalid-brand-type",
+        ),
+        pytest.param(
+            "unit_price",
+            "1.5",
+            id="unit-price-numeric-string",
+        ),
+        pytest.param(
+            "supplier",
+            {
+                **SUPPLIER,
+                "reliability_score": "0.9",
+            },
+            id="reliability-numeric-string",
+        ),
+        pytest.param(
+            "updated_at",
+            1721822400,
+            id="updated-at-numeric-timestamp",
+        ),
+        pytest.param(
+            "supplier",
+            {
+                **SUPPLIER,
+                "reliability_score": float("nan"),
+            },
+            id="reliability-nan",
+        ),
+        pytest.param(
+            "supplier",
+            {
+                **SUPPLIER,
+                "reliability_score": float("inf"),
+            },
+            id="reliability-infinity",
+        ),
+    ],
+)
 async def test_malformed_product_returns_structured_mcp_error(
     monkeypatch,
     settings: Settings,
+    field_name,
+    invalid_value,
 ):
     """Transforme un produit malformé en erreur MCP structurée."""
 
-    import httpx
-
-    from clients.product_api import ProductAPIClient
-
-    class MalformedProductAPIClient(ProductAPIClient):
-        """Client Produit réel connecté à une réponse HTTP malformée."""
-
-        def __init__(self, base_url: str) -> None:
-            """Configure un faux transport HTTP sans réseau."""
-
-            def handler(_request):
-                malformed_product = {
-                    **PRODUCT,
-                    "brand": 123,
-                }
-
-                return httpx.Response(
-                    200,
-                    json=malformed_product,
-                )
-
-            transport = httpx.MockTransport(handler)
-
-            self._mock_http_client = httpx.AsyncClient(
-                transport=transport,
-            )
-
-            super().__init__(
-                base_url,
-                http_client=self._mock_http_client,
-            )
-
-        async def aclose(self) -> None:
-            """Ferme le faux client HTTP."""
-
-            await self._mock_http_client.aclose()
+    malformed_product = {
+        **PRODUCT,
+        field_name: invalid_value,
+    }
 
     monkeypatch.setattr(
         server_module,
         "ProductAPIClient",
-        MalformedProductAPIClient,
+        create_mocked_product_client(
+            malformed_product
+        ),
     )
 
     mcp = server_module.create_server(settings)
@@ -672,6 +764,46 @@ async def test_malformed_product_returns_structured_mcp_error(
                 "ne respecte pas le contrat attendu."
             ),
         },
+    }
+
+
+@pytest.mark.asyncio
+async def test_valid_product_through_real_client_and_mcp(
+    monkeypatch,
+    settings: Settings,
+):
+    """Retourne un produit valide après validation du vrai client."""
+
+    valid_product = {
+        **PRODUCT,
+        "supplier": SUPPLIER,
+    }
+
+    monkeypatch.setattr(
+        server_module,
+        "ProductAPIClient",
+        create_mocked_product_client(valid_product),
+    )
+
+    mcp = server_module.create_server(settings)
+
+    async with create_connected_server_and_client_session(
+        mcp,
+        raise_exceptions=True,
+    ) as session:
+        result = await session.call_tool(
+            "get_product_details",
+            {
+                "product_id": 12,
+            },
+        )
+
+    payload = get_structured_content(result)
+
+    assert payload == {
+        "success": True,
+        "product": valid_product,
+        "error": None,
     }
 
 

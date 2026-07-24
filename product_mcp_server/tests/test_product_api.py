@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests du client asynchrone de l'API Produit."""
 
+import json
 from contextlib import asynccontextmanager
 
 import httpx
@@ -14,6 +15,34 @@ from clients.errors import (
     ResourceNotFoundError,
 )
 from clients.product_api import ProductAPIClient
+
+
+def create_json_response(payload: object) -> httpx.Response:
+    """Encode un payload contrôlé, y compris les nombres non finis."""
+
+    return httpx.Response(
+        200,
+        content=json.dumps(
+            payload,
+            allow_nan=True,
+        ).encode(),
+        headers={
+            "content-type": "application/json",
+        },
+    )
+
+
+def sample_supplier(reliability_score=0.99) -> dict:
+    """Retourne un fournisseur fictif conforme au contrat officiel."""
+
+    return {
+        "id": "SUP-TEST-001",
+        "name": "Fournisseur de test",
+        "contact_email": "supplier@example.test",
+        "country": "France",
+        "lead_time_days": 2,
+        "reliability_score": reliability_score,
+    }
 
 
 def sample_product(product_id: int = 1) -> dict:
@@ -34,6 +63,7 @@ def sample_product(product_id: int = 1) -> dict:
         "weight_kg": 1.0,
         "tags": ["test"],
         "updated_at": "2026-07-24T12:00:00Z",
+        "supplier": sample_supplier(),
     }
 
 
@@ -95,6 +125,26 @@ async def test_get_product_details_returns_product():
 
     assert result["id"] == 12
     assert result["name"] == "Produit de test"
+
+
+@pytest.mark.asyncio
+async def test_product_accepts_valid_json_numbers():
+    """Accepte les entiers JSON sans borner le score fournisseur."""
+
+    valid_product = sample_product()
+    valid_product["unit_price"] = 0
+    valid_product["weight_kg"] = 1
+    valid_product["supplier"] = sample_supplier(-0.5)
+
+    def handler(_request):
+        return create_json_response(valid_product)
+
+    async with create_test_client(handler) as client:
+        result = await client.get_product_details(1)
+
+    assert result["unit_price"] == 0.0
+    assert result["weight_kg"] == 1.0
+    assert result["supplier"]["reliability_score"] == -0.5
 
 
 @pytest.mark.asyncio
@@ -244,6 +294,89 @@ async def test_product_page_rejects_invalid_structure():
 
 
 @pytest.mark.asyncio
+async def test_product_page_rejects_mismatched_limit():
+    """Refuse une limite différente de celle demandée."""
+
+    def handler(_request):
+        return httpx.Response(
+            200,
+            json={
+                "count": 1,
+                "limit": 10,
+                "offset": 40,
+                "results": [sample_product()],
+            },
+        )
+
+    async with create_test_client(handler) as client:
+        with pytest.raises(
+            ExternalServiceResponseError,
+            match="limit",
+        ):
+            await client.list_products(
+                limit=20,
+                offset=40,
+            )
+
+
+@pytest.mark.asyncio
+async def test_product_page_rejects_mismatched_offset():
+    """Refuse un décalage différent de celui demandé."""
+
+    def handler(_request):
+        return httpx.Response(
+            200,
+            json={
+                "count": 1,
+                "limit": 20,
+                "offset": 0,
+                "results": [sample_product()],
+            },
+        )
+
+    async with create_test_client(handler) as client:
+        with pytest.raises(
+            ExternalServiceResponseError,
+            match="offset",
+        ):
+            await client.list_products(
+                limit=20,
+                offset=40,
+            )
+
+
+@pytest.mark.asyncio
+async def test_product_page_rejects_too_many_results():
+    """Refuse une page contenant plus de résultats que sa limite."""
+
+    products = [
+        sample_product(product_id)
+        for product_id in range(1, 22)
+    ]
+
+    def handler(_request):
+        return httpx.Response(
+            200,
+            json={
+                "count": len(products),
+                "limit": 20,
+                "offset": 40,
+                "results": products,
+            },
+        )
+
+    async with create_test_client(handler) as client:
+        with pytest.raises(
+            ExternalServiceResponseError,
+            match="plus de résultats",
+        ):
+            await client.list_products(
+                limit=20,
+                offset=40,
+            )
+
+
+@pytest.mark.asyncio
 async def test_product_rejects_missing_required_field():
     """Refuse un produit auquel il manque un champ essentiel."""
 
@@ -341,6 +474,96 @@ async def test_product_api_transforms_network_error():
                 "id": "SUP-INCOMPLET",
             },
         ),
+        pytest.param(
+            "unit_price",
+            "1.5",
+            id="unit-price-numeric-string",
+        ),
+        pytest.param(
+            "unit_price",
+            True,
+            id="unit-price-boolean",
+        ),
+        pytest.param(
+            "unit_price",
+            -0.01,
+            id="unit-price-negative",
+        ),
+        pytest.param(
+            "unit_price",
+            float("nan"),
+            id="unit-price-nan",
+        ),
+        pytest.param(
+            "unit_price",
+            float("inf"),
+            id="unit-price-positive-infinity",
+        ),
+        pytest.param(
+            "unit_price",
+            float("-inf"),
+            id="unit-price-negative-infinity",
+        ),
+        pytest.param(
+            "weight_kg",
+            "1.0",
+            id="weight-numeric-string",
+        ),
+        pytest.param(
+            "weight_kg",
+            False,
+            id="weight-boolean",
+        ),
+        pytest.param(
+            "weight_kg",
+            -0.01,
+            id="weight-negative",
+        ),
+        pytest.param(
+            "weight_kg",
+            float("nan"),
+            id="weight-nan",
+        ),
+        pytest.param(
+            "weight_kg",
+            float("inf"),
+            id="weight-positive-infinity",
+        ),
+        pytest.param(
+            "weight_kg",
+            float("-inf"),
+            id="weight-negative-infinity",
+        ),
+        pytest.param(
+            "updated_at",
+            1721822400,
+            id="updated-at-numeric-timestamp",
+        ),
+        pytest.param(
+            "supplier",
+            sample_supplier("0.9"),
+            id="reliability-numeric-string",
+        ),
+        pytest.param(
+            "supplier",
+            sample_supplier(True),
+            id="reliability-boolean",
+        ),
+        pytest.param(
+            "supplier",
+            sample_supplier(float("nan")),
+            id="reliability-nan",
+        ),
+        pytest.param(
+            "supplier",
+            sample_supplier(float("inf")),
+            id="reliability-positive-infinity",
+        ),
+        pytest.param(
+            "supplier",
+            sample_supplier(float("-inf")),
+            id="reliability-negative-infinity",
+        ),
     ],
 )
 async def test_product_rejects_invalid_complete_contract(
@@ -353,10 +576,7 @@ async def test_product_rejects_invalid_complete_contract(
     invalid_product[field_name] = invalid_value
 
     def handler(_request):
-        return httpx.Response(
-            200,
-            json=invalid_product,
-        )
+        return create_json_response(invalid_product)
 
     async with create_test_client(handler) as client:
         with pytest.raises(

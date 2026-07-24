@@ -53,7 +53,11 @@ class ProductAPIClient:
             },
         )
 
-        return _validate_product_page(data)
+        return _validate_product_page(
+            data,
+            expected_limit=limit,
+            expected_offset=offset,
+        )
 
     async def get_product_details(
         self,
@@ -155,6 +159,9 @@ class ProductAPIClient:
 
 def _validate_product_page(
     data: dict[str, Any],
+    *,
+    expected_limit: int,
+    expected_offset: int,
 ) -> dict[str, Any]:
     """Valide une réponse paginée de l'API Produit."""
 
@@ -181,6 +188,12 @@ def _validate_product_page(
             "Le champ limit de l'API Produit est invalide."
         )
 
+    if limit != expected_limit:
+        raise ExternalServiceResponseError(
+            "Le champ limit de l'API Produit ne correspond pas "
+            "à la pagination demandée."
+        )
+
     if (
         isinstance(offset, bool)
         or not isinstance(offset, int)
@@ -190,9 +203,21 @@ def _validate_product_page(
             "Le champ offset de l'API Produit est invalide."
         )
 
+    if offset != expected_offset:
+        raise ExternalServiceResponseError(
+            "Le champ offset de l'API Produit ne correspond pas "
+            "à la pagination demandée."
+        )
+
     if not isinstance(results, list):
         raise ExternalServiceResponseError(
             "Le champ results de l'API Produit doit être une liste."
+        )
+
+    if len(results) > limit:
+        raise ExternalServiceResponseError(
+            "L'API Produit a retourné plus de résultats que "
+            "la limite demandée."
         )
 
     validated_results = [
@@ -232,21 +257,6 @@ def _validate_product(
     return validated_product.model_dump(
         mode="json",
     )
-
-
-def _validate_response_identifier(value: Any) -> int:
-    """Valide un identifiant reçu depuis l'API Produit."""
-
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, int)
-        or value <= 0
-    ):
-        raise ExternalServiceResponseError(
-            "L'identifiant retourné par l'API Produit est invalide."
-        )
-
-    return value
 
 
 def _validate_positive_identifier(
