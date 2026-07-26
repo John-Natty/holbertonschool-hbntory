@@ -1,5 +1,6 @@
 """Tests du lifespan FastAPI et de la disponibilité MCP."""
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
@@ -33,11 +34,27 @@ class FakeLifecycleClient:
         self.connect_error = connect_error
         self.close_error = close_error
         self.connect_count = 0
+        self.ensure_count = 0
         self.close_count = 0
 
     @property
     def is_ready(self) -> bool:
         """Expose l'état observé par GET /ready."""
+
+        return self._ready
+
+    async def ensure_connected(self) -> bool:
+        """Simule une reconnexion unique lorsque le client est indisponible."""
+
+        self.ensure_count += 1
+
+        if self._ready:
+            return True
+
+        try:
+            await self.connect()
+        except MCPConnectionError:
+            return False
 
         return self._ready
 
@@ -136,6 +153,9 @@ async def test_lifespan_builds_connects_and_closes_once() -> None:
                 "server_url": "http://mcp.test/mcp",
                 "request_timeout_seconds": 3.5,
                 "max_concurrent_calls": 4,
+                "reconnect_attempts": 3,
+                "reconnect_initial_delay_seconds": 0.25,
+                "reconnect_max_delay_seconds": 2.0,
             }
         ]
 
@@ -163,6 +183,7 @@ async def test_ready_returns_200_when_mcp_is_connected() -> None:
         "mcp": "connected",
     }
     assert lifecycle_client.connect_count == 1
+    assert lifecycle_client.ensure_count == 1
     assert lifecycle_client.close_count == 1
 
 
@@ -197,8 +218,79 @@ async def test_expected_connection_failure_keeps_http_available() -> None:
         "mcp": "disconnected",
     }
     assert second_ready_response.status_code == 503
-    assert lifecycle_client.connect_count == 1
+    assert lifecycle_client.connect_count == 3
+    assert lifecycle_client.ensure_count == 2
     assert lifecycle_client.close_count == 1
+
+
+async def test_real_streamable_transport_failure_keeps_http_available(
+) -> None:
+    """Reproduit une connexion locale refusée avec le transport officiel."""
+
+    application = create_app(
+        settings=Settings(
+            mcp_server_url="http://127.0.0.1:9/mcp",
+            mcp_request_timeout_seconds=0.2,
+            mcp_reconnect_attempts=1,
+            mcp_reconnect_initial_delay_seconds=0,
+            mcp_reconnect_max_delay_seconds=0,
+        )
+    )
+    transport = ASGITransport(app=application)
+
+    async with asyncio.timeout(5):
+        async with application.router.lifespan_context(
+            application
+        ):
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://testserver",
+            ) as client:
+                health_response = await client.get("/health")
+                ready_response = await client.get("/ready")
+                query_response = await client.post(
+                    "/query",
+                    json={
+                        "question": "liste les produits",
+                    },
+                )
+
+    assert health_response.status_code == 200
+    assert ready_response.status_code == 503
+    assert query_response.status_code == 503
+    assert query_response.json()["error"] == {
+        "code": "service_unavailable",
+        "message": "Le serveur MCP n’est pas connecté.",
+    }
+
+
+async def test_ready_recovers_after_connection_is_restored() -> None:
+    """Déclenche une nouvelle connexion bornée depuis GET /ready."""
+
+    lifecycle_client = FakeLifecycleClient(
+        connect_error=MCPConnectionError(
+            "Connexion indisponible."
+        )
+    )
+    application = create_app(
+        settings=create_test_settings(),
+        mcp_client_factory=FakeClientFactory(lifecycle_client),
+    )
+    transport = ASGITransport(app=application)
+
+    async with application.router.lifespan_context(application):
+        lifecycle_client.connect_error = None
+
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+        ) as client:
+            response = await client.get("/ready")
+
+    assert response.status_code == 200
+    assert response.json()["mcp"] == "connected"
+    assert lifecycle_client.connect_count == 2
+    assert lifecycle_client.ensure_count == 1
 
 
 async def test_query_returns_503_when_shared_client_is_not_ready() -> None:
@@ -227,7 +319,8 @@ async def test_query_returns_503_when_shared_client_is_not_ready() -> None:
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "service_unavailable"
-    assert lifecycle_client.connect_count == 1
+    assert lifecycle_client.connect_count == 2
+    assert lifecycle_client.ensure_count == 1
 
 
 async def test_missing_lifespan_state_returns_controlled_503(

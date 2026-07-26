@@ -137,6 +137,11 @@ class FakeMCPDataClient:
 
         return self.ready
 
+    async def ensure_connected(self) -> bool:
+        """Retourne la disponibilité simulée sans appel métier."""
+
+        return self.ready
+
     def _raise_error(self) -> None:
         """Lève l'erreur configurée avant de retourner des données."""
 

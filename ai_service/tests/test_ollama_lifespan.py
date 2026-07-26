@@ -32,6 +32,11 @@ class FakeLifecycleMCPClient:
 
         return self._ready
 
+    async def ensure_connected(self) -> bool:
+        """Retourne l'état de la fausse connexion."""
+
+        return self._ready
+
     async def connect(self) -> None:
         """Simule une connexion MCP réussie."""
 

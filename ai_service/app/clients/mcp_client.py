@@ -1,11 +1,17 @@
 """Client partagé du serveur MCP Produit et Stock."""
 
 import asyncio
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager, AsyncExitStack
+from collections.abc import Callable, Iterator
+from contextlib import (
+    AbstractAsyncContextManager,
+    AsyncExitStack,
+    contextmanager,
+)
 from datetime import timedelta
+import logging
 from types import TracebackType
 from typing import Any, TypeVar
+from urllib.parse import urlsplit
 
 import httpx
 from anyio import (
@@ -74,6 +80,39 @@ _TRANSPORT_ERRORS = (
     ClosedResourceError,
     EndOfStream,
 )
+_MCP_TRANSPORT_LOGGER = "mcp.client.streamable_http"
+_LOST_SESSION_WARNING = "Session termination failed:"
+
+
+class _LostSessionTerminationFilter(logging.Filter):
+    """Ignore uniquement l'avertissement attendu d'une session déjà perdue."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Conserve tous les messages sauf la terminaison déjà impossible."""
+
+        return not record.getMessage().startswith(
+            _LOST_SESSION_WARNING
+        )
+
+
+@contextmanager
+def _silence_lost_session_warning(
+    enabled: bool,
+) -> Iterator[None]:
+    """Filtre temporairement le bruit connu pendant un nettoyage dégradé."""
+
+    if not enabled:
+        yield
+        return
+
+    transport_logger = logging.getLogger(_MCP_TRANSPORT_LOGGER)
+    log_filter = _LostSessionTerminationFilter()
+    transport_logger.addFilter(log_filter)
+
+    try:
+        yield
+    finally:
+        transport_logger.removeFilter(log_filter)
 
 
 class ProductMCPClient:
@@ -84,6 +123,9 @@ class ProductMCPClient:
         server_url: str,
         request_timeout_seconds: float,
         max_concurrent_calls: int,
+        reconnect_attempts: int = 3,
+        reconnect_initial_delay_seconds: float = 0.25,
+        reconnect_max_delay_seconds: float = 2.0,
         *,
         transport_factory: TransportFactory = streamable_http_client,
         session_factory: SessionFactory = ClientSession,
@@ -91,19 +133,116 @@ class ProductMCPClient:
         """Injecte la configuration et les fabriques du transport."""
 
         self._server_url = server_url
+        parsed_server_url = urlsplit(server_url)
+
+        if parsed_server_url.hostname is None:
+            raise ValueError(
+                "L'URL du serveur MCP doit contenir un hôte."
+            )
+
         self._request_timeout_seconds = request_timeout_seconds
+        self._reconnect_attempts = reconnect_attempts
+        self._reconnect_initial_delay_seconds = (
+            reconnect_initial_delay_seconds
+        )
+        self._reconnect_max_delay_seconds = (
+            reconnect_max_delay_seconds
+        )
         self._transport_factory = transport_factory
         self._session_factory = session_factory
         self._semaphore = asyncio.Semaphore(max_concurrent_calls)
         self._lifecycle_lock = asyncio.Lock()
+        self._reconnect_lock = asyncio.Lock()
         self._stack: AsyncExitStack | None = None
         self._session: ClientSession | None = None
+        self._connection_task: asyncio.Task[None] | None = None
+        self._connection_stop: asyncio.Event | None = None
+        self._transport_available = False
 
     @property
     def is_ready(self) -> bool:
         """Indique si la session a validé les cinq outils attendus."""
 
-        return self._session is not None and self._stack is not None
+        return (
+            self._session is not None
+            and self._stack is not None
+            and self._connection_task is not None
+            and not self._connection_task.done()
+            and self._transport_available
+        )
+
+    async def check_connection(self) -> bool:
+        """Vérifie la session avec le ping léger du protocole MCP."""
+
+        session = self._session
+
+        if session is None or self._stack is None:
+            self._transport_available = False
+            return False
+
+        if not self._transport_available:
+            return False
+
+        try:
+            async with asyncio.timeout(
+                min(self._request_timeout_seconds, 1.0)
+            ):
+                await session.send_ping()
+        except asyncio.CancelledError:
+            raise
+        except BaseException as error:
+            translated = self._translate_expected_error(
+                error,
+                during_connection=True,
+            )
+
+            if (
+                translated is None
+                and self._is_internal_cancellation_group(error)
+            ):
+                translated = MCPConnectionError(
+                    "La connexion au serveur MCP a échoué."
+                )
+
+            if translated is None:
+                raise
+
+            self._transport_available = False
+            return False
+
+        self._transport_available = True
+        return True
+
+    async def ensure_connected(self) -> bool:
+        """Vérifie la session ou exécute une reconnexion bornée."""
+
+        if await self.check_connection():
+            return True
+
+        async with self._reconnect_lock:
+            if await self.check_connection():
+                return True
+
+            delay = self._reconnect_initial_delay_seconds
+
+            for attempt in range(self._reconnect_attempts):
+                try:
+                    await self.connect()
+                except MCPClientError:
+                    if attempt + 1 >= self._reconnect_attempts:
+                        return False
+
+                    if delay > 0:
+                        await asyncio.sleep(delay)
+
+                    delay = min(
+                        max(delay * 2, delay),
+                        self._reconnect_max_delay_seconds,
+                    )
+                else:
+                    return self.is_ready
+
+        return False
 
     async def __aenter__(self) -> "ProductMCPClient":
         """Connecte le client à l'entrée du contexte."""
@@ -128,68 +267,224 @@ class ProductMCPClient:
             if self.is_ready:
                 return
 
+            await self._stop_connection_locked()
+
+            loop = asyncio.get_running_loop()
+            started: asyncio.Future[None] = loop.create_future()
+            stop_event = asyncio.Event()
             stack = AsyncExitStack()
+            connection_task = asyncio.create_task(
+                self._run_connection(
+                    stack,
+                    started,
+                    stop_event,
+                ),
+                name="hbntory-mcp-connection",
+            )
+            self._connection_task = connection_task
+            self._connection_stop = stop_event
 
             try:
-                transport = await stack.enter_async_context(
-                    self._transport_factory(self._server_url)
-                )
-                read_stream, write_stream, _ = transport
-                session = await stack.enter_async_context(
-                    self._session_factory(
-                        read_stream,
-                        write_stream,
-                        read_timeout_seconds=timedelta(
-                            seconds=self._request_timeout_seconds
-                        ),
-                    )
-                )
-
-                async with asyncio.timeout(
-                    self._request_timeout_seconds
-                ):
-                    await session.initialize()
-                    tools_result = await session.list_tools()
-
-                self._validate_tools(tools_result)
-            except BaseException as error:
-                await self._close_failed_stack(stack)
-                translated = self._translate_expected_error(
-                    error,
-                    during_connection=True,
-                )
-
-                if translated is not None:
-                    raise translated from error
+                await asyncio.shield(started)
+            except asyncio.CancelledError:
+                started.cancel()
+                connection_task.cancel()
+                await self._await_cancelled_connection(connection_task)
+                self._clear_connection_references(connection_task)
+                raise
+            except BaseException:
+                try:
+                    await connection_task
+                finally:
+                    self._clear_connection_references(connection_task)
 
                 raise
-
-            self._stack = stack
-            self._session = session
 
     async def close(self) -> None:
         """Ferme les ressources MCP de manière idempotente."""
 
         async with self._lifecycle_lock:
-            stack = self._stack
-            self._stack = None
-            self._session = None
+            await self._stop_connection_locked()
 
-            if stack is None:
-                return
+    async def _run_connection(
+        self,
+        stack: AsyncExitStack,
+        started: asyncio.Future[None],
+        stop_event: asyncio.Event,
+    ) -> None:
+        """Possède les contextes MCP dans une seule tâche contrôlée."""
 
-            try:
-                await stack.aclose()
-            except BaseException as error:
-                translated = self._translate_expected_error(
-                    error,
-                    during_connection=True,
+        clean_shutdown = False
+
+        try:
+            transport = await stack.enter_async_context(
+                self._transport_factory(self._server_url)
+            )
+            read_stream, write_stream, _ = transport
+            session = await stack.enter_async_context(
+                self._session_factory(
+                    read_stream,
+                    write_stream,
+                    read_timeout_seconds=timedelta(
+                        seconds=self._request_timeout_seconds
+                    ),
+                )
+            )
+
+            async with asyncio.timeout(
+                self._request_timeout_seconds
+            ):
+                await session.initialize()
+                tools_result = await session.list_tools()
+
+            self._validate_tools(tools_result)
+            self._stack = stack
+            self._session = session
+            self._transport_available = True
+
+            if not started.done():
+                started.set_result(None)
+
+            await stop_event.wait()
+            clean_shutdown = self._transport_available
+        except asyncio.CancelledError as error:
+            if not started.done():
+                started.set_exception(
+                    MCPConnectionError(
+                        "La connexion au serveur MCP a échoué."
+                    )
+                )
+        except BaseException as error:
+            translated = self._translate_expected_error(
+                error,
+                during_connection=True,
+            )
+
+            if (
+                translated is None
+                and not started.done()
+                and self._is_internal_cancellation_group(error)
+            ):
+                translated = MCPConnectionError(
+                    "La connexion au serveur MCP a échoué."
                 )
 
-                if translated is not None:
-                    raise translated from error
+            failure = translated or error
 
+            if not started.done():
+                started.set_exception(failure)
+            elif translated is None:
                 raise
+        finally:
+            self._transport_available = False
+            self._session = None
+
+            with _silence_lost_session_warning(
+                enabled=not clean_shutdown
+            ):
+                try:
+                    await stack.aclose()
+                except BaseException as error:
+                    translated = self._translate_expected_error(
+                        error,
+                        during_connection=True,
+                    )
+
+                    if not started.done():
+                        started.set_exception(translated or error)
+                    elif translated is None:
+                        raise
+
+            if self._stack is stack:
+                self._stack = None
+
+            if not started.done():
+                started.set_exception(
+                    MCPConnectionError(
+                        "La connexion au serveur MCP a échoué."
+                    )
+                )
+
+    async def _stop_connection_locked(self) -> None:
+        """Arrête la tâche propriétaire et nettoie son état."""
+
+        connection_task = self._connection_task
+        stop_event = self._connection_stop
+
+        if connection_task is None:
+            self._stack = None
+            self._session = None
+            self._transport_available = False
+            return
+
+        connection_was_lost = not self._transport_available
+
+        if not connection_task.done():
+            if connection_was_lost:
+                connection_task.cancel()
+            elif stop_event is not None:
+                stop_event.set()
+
+        try:
+            with _silence_lost_session_warning(
+                enabled=connection_was_lost
+            ):
+                await connection_task
+        except asyncio.CancelledError:
+            pass
+        except BaseException as error:
+            translated = self._translate_expected_error(
+                error,
+                during_connection=True,
+            )
+
+            if translated is None:
+                raise
+        finally:
+            self._clear_connection_references(connection_task)
+
+    def _clear_connection_references(
+        self,
+        connection_task: asyncio.Task[None],
+    ) -> None:
+        """Efface seulement les références de la génération terminée."""
+
+        if self._connection_task is not connection_task:
+            return
+
+        self._connection_task = None
+        self._connection_stop = None
+        self._stack = None
+        self._session = None
+        self._transport_available = False
+
+    @staticmethod
+    async def _await_cancelled_connection(
+        connection_task: asyncio.Task[None],
+    ) -> None:
+        """Attend le nettoyage interne sans masquer l'annulation appelante."""
+
+        try:
+            await connection_task
+        except asyncio.CancelledError:
+            pass
+
+    @staticmethod
+    def _is_internal_cancellation_group(
+        error: BaseException,
+    ) -> bool:
+        """Reconnaît un groupe composé uniquement d'annulations internes."""
+
+        if not isinstance(error, BaseExceptionGroup):
+            return False
+
+        return all(
+            isinstance(nested_error, asyncio.CancelledError)
+            or ProductMCPClient._is_internal_cancellation_group(
+                nested_error
+            )
+            for nested_error in error.exceptions
+        )
 
     async def list_products(
         self,
@@ -379,6 +674,9 @@ class ProductMCPClient:
             )
 
             if translated is not None:
+                if isinstance(translated, MCPConnectionError):
+                    self._transport_available = False
+
                 raise translated from error
 
             raise
@@ -476,21 +774,6 @@ class ProductMCPClient:
             )
 
     @staticmethod
-    async def _close_failed_stack(stack: AsyncExitStack) -> None:
-        """Ferme les ressources créées avant un échec de connexion."""
-
-        try:
-            await stack.aclose()
-        except BaseException as error:
-            translated = ProductMCPClient._translate_expected_error(
-                error,
-                during_connection=True,
-            )
-
-            if translated is None:
-                raise
-
-    @staticmethod
     def _translate_expected_error(
         error: BaseException,
         *,
@@ -527,18 +810,28 @@ class ProductMCPClient:
             )
 
         if isinstance(error, BaseExceptionGroup):
-            translated_errors = [
-                ProductMCPClient._translate_expected_error(
-                    nested_error,
-                    during_connection=during_connection,
-                )
-                for nested_error in error.exceptions
-            ]
+            translated_errors: list[MCPClientError] = []
 
-            if any(
-                translated_error is None
-                for translated_error in translated_errors
-            ):
+            for nested_error in error.exceptions:
+                if isinstance(
+                    nested_error,
+                    asyncio.CancelledError,
+                ):
+                    continue
+
+                translated_error = (
+                    ProductMCPClient._translate_expected_error(
+                        nested_error,
+                        during_connection=during_connection,
+                    )
+                )
+
+                if translated_error is None:
+                    return None
+
+                translated_errors.append(translated_error)
+
+            if not translated_errors:
                 return None
 
             if all(

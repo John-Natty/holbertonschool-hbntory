@@ -25,14 +25,25 @@ _À compléter._ Prérequis, clonage, création du fichier `.env` à partir de
 
 ## Lancement des services
 
-_À compléter._ Commande de lancement pour chaque service :
+Le mode Compose par défaut démarre PostgreSQL, l'API Produit, le Backoffice,
+le serveur MCP et le service IA en mode déterministe `rules` :
 
-- Base de données
-- API Produit
-- Backoffice
-- Serveur MCP
-- Service IA
-- Client web
+```bash
+cp .env.example .env
+# Remplacer les valeurs d'exemple sensibles.
+
+docker compose up -d
+docker compose ps
+```
+
+Le service IA est ensuite accessible sur `http://localhost:8001`. Ollama est
+facultatif et possède un profil séparé :
+
+```bash
+docker compose --profile ollama up -d ollama
+```
+
+Le client web n'est pas encore intégré au lancement Compose.
 
 ## Initialisation de la base de données
 

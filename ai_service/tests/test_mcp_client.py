@@ -168,9 +168,11 @@ class FakeSession:
         self.exit_count = 0
         self.initialize_count = 0
         self.list_tools_count = 0
+        self.ping_count = 0
         self.calls: list[tuple[str, dict[str, object]]] = []
         self.call_handler = None
         self.initialize_error = None
+        self.ping_error = None
         self.next_cursor = None
 
     async def __aenter__(self) -> "FakeSession":
@@ -205,6 +207,14 @@ class FakeSession:
             tools=self.tools,
             nextCursor=self.next_cursor,
         )
+
+    async def send_ping(self) -> None:
+        """Vérifie la génération de session sans appel métier."""
+
+        self.ping_count += 1
+
+        if self.ping_error is not None:
+            raise self.ping_error
 
     async def call_tool(
         self,
@@ -275,6 +285,9 @@ class FakeMCPEnvironment:
         *,
         timeout: float = 1.0,
         concurrency: int = 10,
+        reconnect_attempts: int = 3,
+        reconnect_initial_delay: float = 0.25,
+        reconnect_max_delay: float = 2.0,
     ) -> ProductMCPClient:
         """Crée le vrai client avec les deux fabriques injectées."""
 
@@ -282,6 +295,79 @@ class FakeMCPEnvironment:
             "http://mcp.test/mcp",
             request_timeout_seconds=timeout,
             max_concurrent_calls=concurrency,
+            reconnect_attempts=reconnect_attempts,
+            reconnect_initial_delay_seconds=(
+                reconnect_initial_delay
+            ),
+            reconnect_max_delay_seconds=reconnect_max_delay,
+            transport_factory=self.transport_factory,
+            session_factory=self.session_factory,
+        )
+
+
+class SequencedMCPEnvironment:
+    """Crée une nouvelle paire transport-session à chaque connexion."""
+
+    def __init__(
+        self,
+        *,
+        failures: int = 0,
+    ) -> None:
+        """Configure le nombre d'initialisations réseau en échec."""
+
+        self.failures_remaining = failures
+        self.transports: list[FakeTransportContext] = []
+        self.sessions: list[FakeSession] = []
+
+    def transport_factory(
+        self,
+        _url: str,
+    ) -> FakeTransportContext:
+        """Crée un transport propre pour la nouvelle génération."""
+
+        transport = FakeTransportContext()
+        self.transports.append(transport)
+        return transport
+
+    def session_factory(
+        self,
+        *_arguments: object,
+        **_keywords: object,
+    ) -> FakeSession:
+        """Crée une session réussie ou une connexion refusée."""
+
+        session = FakeSession(
+            [
+                SimpleNamespace(name=name)
+                for name in sorted(EXPECTED_TOOLS)
+            ]
+        )
+
+        if self.failures_remaining > 0:
+            self.failures_remaining -= 1
+            session.initialize_error = httpx.ConnectError(
+                "Connexion locale refusée."
+            )
+
+        self.sessions.append(session)
+        return session
+
+    def create_client(
+        self,
+        *,
+        attempts: int = 3,
+        initial_delay: float = 0,
+        max_delay: float = 0,
+    ) -> ProductMCPClient:
+        """Crée le client réel avec des générations observables."""
+
+        return ProductMCPClient(
+            "http://mcp.test/mcp",
+            request_timeout_seconds=1,
+            max_concurrent_calls=10,
+            reconnect_attempts=attempts,
+            reconnect_initial_delay_seconds=initial_delay,
+            reconnect_max_delay_seconds=max_delay,
             transport_factory=self.transport_factory,
             session_factory=self.session_factory,
         )
@@ -301,6 +387,149 @@ async def test_connect_initializes_and_validates_tools() -> None:
     assert environment.session.list_tools_count == 1
     assert environment.transport.enter_count == 1
     assert environment.session.enter_count == 1
+
+    await client.close()
+
+
+async def test_connection_check_updates_runtime_readiness(
+) -> None:
+    """Invalide la disponibilité lorsque la session MCP disparaît."""
+
+    environment = FakeMCPEnvironment()
+    client = environment.create_client()
+    await client.connect()
+
+    assert await client.check_connection() is True
+    assert environment.session.ping_count == 1
+    assert client.is_ready is True
+
+    environment.session.ping_error = httpx.ConnectError(
+        "Session MCP perdue."
+    )
+
+    assert await client.check_connection() is False
+    assert client.is_ready is False
+
+    await client.close()
+
+
+async def test_internal_initialization_cancellation_is_connection_error(
+) -> None:
+    """Traduit l'annulation interne du SDK sans conserver de ressource."""
+
+    environment = FakeMCPEnvironment()
+    environment.session.initialize_error = asyncio.CancelledError()
+    client = environment.create_client()
+
+    with pytest.raises(MCPConnectionError):
+        await client.connect()
+
+    assert client.is_ready is False
+    assert environment.transport.exit_count == 1
+    assert environment.session.exit_count == 1
+
+    await client.close()
+    await client.close()
+
+
+async def test_reconnect_replaces_and_closes_lost_session(
+) -> None:
+    """Ferme l'ancienne génération avant de restaurer la connexion."""
+
+    environment = SequencedMCPEnvironment()
+    client = environment.create_client()
+    await client.connect()
+    first_session = environment.sessions[0]
+    first_session.ping_error = httpx.ConnectError(
+        "Session MCP perdue."
+    )
+
+    assert await client.check_connection() is False
+    assert await client.ensure_connected() is True
+    assert client.is_ready is True
+    assert len(environment.sessions) == 2
+    assert environment.sessions[1] is not first_session
+    assert first_session.exit_count == 1
+    assert environment.transports[0].exit_count == 1
+
+    await client.close()
+
+
+async def test_concurrent_reconnect_creates_only_one_session(
+) -> None:
+    """Sérialise plusieurs récupérations sur le verrou dédié."""
+
+    environment = SequencedMCPEnvironment()
+    client = environment.create_client()
+    await client.connect()
+    environment.sessions[0].ping_error = httpx.ConnectError(
+        "Session MCP perdue."
+    )
+    assert await client.check_connection() is False
+
+    results = await asyncio.gather(
+        *(client.ensure_connected() for _ in range(5))
+    )
+
+    assert results == [True] * 5
+    assert len(environment.sessions) == 2
+    assert len(environment.transports) == 2
+
+    await client.close()
+
+
+async def test_reconnect_respects_attempts_and_bounded_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Épuise exactement trois essais avec un délai plafonné."""
+
+    environment = SequencedMCPEnvironment(failures=10)
+    client = environment.create_client(
+        attempts=3,
+        initial_delay=0.25,
+        max_delay=0.3,
+    )
+    observed_delays: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        observed_delays.append(delay)
+
+    monkeypatch.setattr(asyncio, "sleep", record_sleep)
+
+    assert await client.ensure_connected() is False
+    assert len(environment.sessions) == 3
+    assert len(environment.transports) == 3
+    assert observed_delays == [0.25, 0.3]
+    assert client.is_ready is False
+
+    await client.close()
+    await client.close()
+
+
+async def test_external_connect_cancellation_is_not_masked() -> None:
+    """Propage l'annulation appelante et ferme les contextes ouverts."""
+
+    environment = FakeMCPEnvironment()
+    initialize_started = asyncio.Event()
+    release_initialize = asyncio.Event()
+
+    async def blocking_initialize() -> None:
+        environment.session.initialize_count += 1
+        initialize_started.set()
+        await release_initialize.wait()
+
+    environment.session.initialize = blocking_initialize
+    client = environment.create_client()
+    connect_task = asyncio.create_task(client.connect())
+    await initialize_started.wait()
+    connect_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await connect_task
+
+    assert client.is_ready is False
+    assert environment.transport.exit_count == 1
+    assert environment.session.exit_count == 1
 
     await client.close()
 

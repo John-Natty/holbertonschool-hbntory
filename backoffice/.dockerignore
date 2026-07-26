@@ -7,8 +7,6 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
-requirements-dev.txt
 .git/
-.gitignore
 tests/
 *.log

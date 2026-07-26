@@ -34,7 +34,7 @@ async def get_query_service(
 async def get_mcp_client(
     request: Request,
 ) -> ProductMCPClient | None:
-    """Lit le client partagé sans initier de reconnexion."""
+    """Lit le client partagé utilisé par la disponibilité."""
 
     client = getattr(
         request.app.state,

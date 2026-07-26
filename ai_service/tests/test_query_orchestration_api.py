@@ -68,6 +68,7 @@ class FakeApplicationMCPClient:
         self.connect_error = connect_error
         self.method_error = method_error
         self.connect_count = 0
+        self.ensure_count = 0
         self.close_count = 0
         self.calls: list[tuple[str, object]] = []
         self.products = ProductListData(
@@ -125,6 +126,21 @@ class FakeApplicationMCPClient:
     @property
     def is_ready(self) -> bool:
         """Expose l'état de la fausse connexion."""
+
+        return self._ready
+
+    async def ensure_connected(self) -> bool:
+        """Simule une restauration de session avant une requête."""
+
+        self.ensure_count += 1
+
+        if self._ready:
+            return True
+
+        try:
+            await self.connect()
+        except MCPConnectionError:
+            return False
 
         return self._ready
 
@@ -476,6 +492,41 @@ async def test_query_returns_503_when_mcp_connection_failed() -> None:
     }
     assert "adresse interne sensible" not in response.text
     assert mcp_client.calls == []
+
+
+async def test_query_reconnects_before_single_business_call() -> None:
+    """Récupère la session puis exécute exactement un outil MCP."""
+
+    mcp_client = FakeApplicationMCPClient(
+        connect_error=MCPConnectionError(
+            "Connexion initiale indisponible."
+        )
+    )
+
+    async with application_client(mcp_client) as (
+        _application,
+        client,
+    ):
+        mcp_client.connect_error = None
+        response = await client.post(
+            "/query",
+            json={
+                "question": "détails du produit 12",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["type"] == "product_details"
+    assert mcp_client.connect_count == 2
+    assert mcp_client.ensure_count == 1
+    assert mcp_client.calls == [
+        (
+            "get_product_details",
+            {
+                "product_id": 12,
+            },
+        )
+    ]
 
 
 @pytest.mark.parametrize(

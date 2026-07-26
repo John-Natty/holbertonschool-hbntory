@@ -59,6 +59,14 @@ class FakeHybridMCPClient:
 
         return self._ready
 
+    async def ensure_connected(self) -> bool:
+        """Restaure la fausse connexion si nécessaire."""
+
+        if not self._ready:
+            await self.connect()
+
+        return self._ready
+
     async def connect(self) -> None:
         """Simule la connexion partagée."""
 

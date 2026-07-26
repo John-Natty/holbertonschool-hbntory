@@ -2,7 +2,9 @@
 
 import httpx
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from app.api.routes import router
 from app.clients.mcp_client import ProductMCPClient
@@ -12,6 +14,34 @@ from app.lifespan import (
     OllamaHTTPClientFactory,
     create_lifespan,
 )
+from app.models.query import ErrorDetail, ErrorResponse
+
+
+_INVALID_REQUEST_MESSAGE = (
+    "La requête contient des paramètres invalides."
+)
+
+
+async def request_validation_error_handler(
+    request: Request,
+    error: RequestValidationError,
+) -> JSONResponse:
+    """Retourne une erreur 422 stable sans détail Pydantic public."""
+
+    del request, error
+
+    response = ErrorResponse(
+        answer=_INVALID_REQUEST_MESSAGE,
+        error=ErrorDetail(
+            code="invalid_parameters",
+            message=_INVALID_REQUEST_MESSAGE,
+        ),
+    )
+
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        content=response.model_dump(mode="json"),
+    )
 
 
 def create_app(
@@ -34,6 +64,10 @@ def create_app(
         ),
     )
     application.include_router(router)
+    application.add_exception_handler(
+        RequestValidationError,
+        request_validation_error_handler,
+    )
 
     return application
 

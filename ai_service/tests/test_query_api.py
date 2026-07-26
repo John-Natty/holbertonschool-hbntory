@@ -14,6 +14,17 @@ from app.models.query import (
 
 pytestmark = pytest.mark.asyncio
 
+INVALID_REQUEST_RESPONSE = {
+    "success": False,
+    "answer": "La requête contient des paramètres invalides.",
+    "type": "error",
+    "data": None,
+    "error": {
+        "code": "invalid_parameters",
+        "message": "La requête contient des paramètres invalides.",
+    },
+}
+
 
 class SuccessfulQueryService:
     """Faux service retournant une réponse réussie sans réseau."""
@@ -77,35 +88,71 @@ async def test_query_returns_structured_unavailable_error(
     }
 
 
-async def test_query_rejects_empty_question(
-    client: AsyncClient,
-):
-    """Retourne 422 pour une question vide."""
-
-    response = await client.post(
-        "/query",
-        json={
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "question": "",
+        },
+        {
             "question": "   ",
         },
-    )
-
-    assert response.status_code == 422
-
-
-async def test_query_rejects_extra_field(
-    client: AsyncClient,
-):
-    """Retourne 422 pour un champ public inattendu."""
-
-    response = await client.post(
-        "/query",
-        json={
+        {
+            "question": "x" * 2001,
+        },
+        {
+            "question": 12,
+        },
+        {
+            "question": True,
+        },
+        {
             "question": "Question valide",
             "unexpected": True,
         },
+    ],
+)
+async def test_query_returns_structured_422(
+    client: AsyncClient,
+    payload: dict[str, object],
+) -> None:
+    """Retourne le même contrat public pour toute entrée invalide."""
+
+    response = await client.post(
+        "/query",
+        json=payload,
     )
 
     assert response.status_code == 422
+    assert response.json() == INVALID_REQUEST_RESPONSE
+    assert set(response.json()) == {
+        "success",
+        "answer",
+        "type",
+        "data",
+        "error",
+    }
+    assert set(response.json()["error"]) == {
+        "code",
+        "message",
+    }
+
+
+async def test_query_returns_structured_422_for_malformed_json(
+    client: AsyncClient,
+) -> None:
+    """Masque également les détails du parseur JSON."""
+
+    response = await client.post(
+        "/query",
+        content='{"question":',
+        headers={
+            "Content-Type": "application/json",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json() == INVALID_REQUEST_RESPONSE
 
 
 async def test_injected_service_returns_success(
@@ -161,3 +208,13 @@ async def test_openapi_exposes_health_ready_and_query(
     assert "get" in paths["/health"]
     assert "get" in paths["/ready"]
     assert "post" in paths["/query"]
+    assert paths["/query"]["post"]["responses"]["422"] == {
+        "description": "Unprocessable Entity",
+        "content": {
+            "application/json": {
+                "schema": {
+                    "$ref": "#/components/schemas/ErrorResponse",
+                }
+            }
+        },
+    }

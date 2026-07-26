@@ -9,6 +9,7 @@ from pydantic import (
     Field,
     StringConstraints,
     field_validator,
+    model_validator,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -30,6 +31,11 @@ ServicePort = Annotated[
 PositiveFiniteFloat = Annotated[
     float,
     Field(gt=0, allow_inf_nan=False),
+]
+
+NonNegativeFiniteFloat = Annotated[
+    float,
+    Field(ge=0, allow_inf_nan=False),
 ]
 
 PositiveInt = Annotated[
@@ -54,6 +60,9 @@ class Settings(BaseSettings):
     )
     mcp_request_timeout_seconds: PositiveFiniteFloat = 10.0
     mcp_max_concurrent_calls: PositiveInt = 10
+    mcp_reconnect_attempts: PositiveInt = 3
+    mcp_reconnect_initial_delay_seconds: NonNegativeFiniteFloat = 0.25
+    mcp_reconnect_max_delay_seconds: NonNegativeFiniteFloat = 2.0
     ai_intent_provider: Literal["rules", "ollama"] = "rules"
     ollama_base_url: AnyHttpUrl = "http://ollama:11434"
     ollama_model: NonEmptyString = "gemma3:latest"
@@ -81,6 +90,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "mcp_max_concurrent_calls",
+        "mcp_reconnect_attempts",
         mode="before",
     )
     @classmethod
@@ -90,6 +100,30 @@ class Settings(BaseSettings):
         if isinstance(value, bool):
             raise ValueError(
                 "La concurrence MCP doit être un entier positif."
+            )
+
+        return value
+
+    @field_validator(
+        "mcp_reconnect_initial_delay_seconds",
+        "mcp_reconnect_max_delay_seconds",
+        mode="before",
+    )
+    @classmethod
+    def reject_invalid_reconnect_delay(
+        cls,
+        value: object,
+    ) -> object:
+        """Refuse une durée de reconnexion booléenne ou non finie."""
+
+        if isinstance(value, bool):
+            raise ValueError(
+                "Le délai de reconnexion doit être un nombre positif ou nul."
+            )
+
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(
+                "Le délai de reconnexion doit être un nombre fini."
             )
 
         return value
@@ -116,6 +150,21 @@ class Settings(BaseSettings):
             )
 
         return value
+
+    @model_validator(mode="after")
+    def validate_reconnect_delay_bounds(self) -> "Settings":
+        """Exige un plafond supérieur ou égal au délai initial."""
+
+        if (
+            self.mcp_reconnect_max_delay_seconds
+            < self.mcp_reconnect_initial_delay_seconds
+        ):
+            raise ValueError(
+                "Le délai maximal de reconnexion doit être supérieur "
+                "ou égal au délai initial."
+            )
+
+        return self
 
 
 @lru_cache

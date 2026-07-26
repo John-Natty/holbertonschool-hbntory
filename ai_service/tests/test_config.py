@@ -12,6 +12,9 @@ CONFIGURATION_VARIABLES = {
     "MCP_SERVER_URL",
     "MCP_REQUEST_TIMEOUT_SECONDS",
     "MCP_MAX_CONCURRENT_CALLS",
+    "MCP_RECONNECT_ATTEMPTS",
+    "MCP_RECONNECT_INITIAL_DELAY_SECONDS",
+    "MCP_RECONNECT_MAX_DELAY_SECONDS",
     "AI_INTENT_PROVIDER",
     "OLLAMA_BASE_URL",
     "OLLAMA_MODEL",
@@ -43,6 +46,9 @@ def test_settings_use_docker_compose_defaults(monkeypatch):
     )
     assert settings.mcp_request_timeout_seconds == 10.0
     assert settings.mcp_max_concurrent_calls == 10
+    assert settings.mcp_reconnect_attempts == 3
+    assert settings.mcp_reconnect_initial_delay_seconds == 0.25
+    assert settings.mcp_reconnect_max_delay_seconds == 2.0
     assert settings.ai_intent_provider == "rules"
     assert str(settings.ollama_base_url) == (
         "http://ollama:11434/"
@@ -69,6 +75,15 @@ def test_settings_read_environment(monkeypatch):
         "MCP_MAX_CONCURRENT_CALLS",
         "4",
     )
+    monkeypatch.setenv("MCP_RECONNECT_ATTEMPTS", "5")
+    monkeypatch.setenv(
+        "MCP_RECONNECT_INITIAL_DELAY_SECONDS",
+        "0.1",
+    )
+    monkeypatch.setenv(
+        "MCP_RECONNECT_MAX_DELAY_SECONDS",
+        "1.5",
+    )
     monkeypatch.setenv("AI_INTENT_PROVIDER", "ollama")
     monkeypatch.setenv(
         "OLLAMA_BASE_URL",
@@ -89,6 +104,9 @@ def test_settings_read_environment(monkeypatch):
     )
     assert settings.mcp_request_timeout_seconds == 2.5
     assert settings.mcp_max_concurrent_calls == 4
+    assert settings.mcp_reconnect_attempts == 5
+    assert settings.mcp_reconnect_initial_delay_seconds == 0.1
+    assert settings.mcp_reconnect_max_delay_seconds == 1.5
     assert settings.ai_intent_provider == "ollama"
     assert str(settings.ollama_base_url) == (
         "http://ollama.test:11435/"
@@ -121,6 +139,17 @@ def test_settings_reject_extra_field(monkeypatch):
         ("mcp_max_concurrent_calls", 0),
         ("mcp_max_concurrent_calls", -1),
         ("mcp_max_concurrent_calls", True),
+        ("mcp_reconnect_attempts", 0),
+        ("mcp_reconnect_attempts", -1),
+        ("mcp_reconnect_attempts", True),
+        ("mcp_reconnect_initial_delay_seconds", -1),
+        ("mcp_reconnect_initial_delay_seconds", True),
+        ("mcp_reconnect_initial_delay_seconds", float("inf")),
+        ("mcp_reconnect_initial_delay_seconds", float("nan")),
+        ("mcp_reconnect_max_delay_seconds", -1),
+        ("mcp_reconnect_max_delay_seconds", True),
+        ("mcp_reconnect_max_delay_seconds", float("inf")),
+        ("mcp_reconnect_max_delay_seconds", float("nan")),
         ("ai_intent_provider", "unknown"),
         ("ai_intent_provider", "OLLAMA"),
         ("ollama_base_url", "ftp://ollama.test"),
@@ -146,4 +175,18 @@ def test_settings_reject_invalid_values(
             **{
                 field_name: invalid_value,
             }
+        )
+
+
+def test_settings_reject_reconnect_max_below_initial(
+    monkeypatch,
+) -> None:
+    """Refuse un plafond de backoff inférieur au délai initial."""
+
+    clear_configuration_environment(monkeypatch)
+
+    with pytest.raises(ValidationError):
+        Settings(
+            mcp_reconnect_initial_delay_seconds=1,
+            mcp_reconnect_max_delay_seconds=0.5,
         )

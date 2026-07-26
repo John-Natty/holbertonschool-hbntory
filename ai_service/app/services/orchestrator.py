@@ -40,6 +40,11 @@ class MCPDataClient(Protocol):
 
         ...
 
+    async def ensure_connected(self) -> bool:
+        """Restaure une session absente avec un nombre borné d'essais."""
+
+        ...
+
     async def list_products(
         self,
         limit: int = 20,
@@ -103,10 +108,11 @@ class QueryOrchestrator:
     ) -> QueryResponse:
         """Route une question, appelle un outil et construit la réponse."""
 
-        if not self._client.is_ready:
-            return self._answer_builder.error(
-                "service_unavailable"
-            )
+        if (
+            not self._client.is_ready
+            and not await self._client.ensure_connected()
+        ):
+            return self._answer_builder.error("service_unavailable")
 
         intent = await self._intent_router.resolve(question)
 

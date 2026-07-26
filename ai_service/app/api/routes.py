@@ -52,9 +52,9 @@ async def ready(
     response: Response,
     client: ProductMCPClient | None = Depends(get_mcp_client),
 ) -> ReadyResponse | NotReadyResponse:
-    """Expose l'état courant du client sans tenter de reconnexion."""
+    """Expose l'état après une vérification ou reconnexion MCP bornée."""
 
-    if client is not None and client.is_ready:
+    if client is not None and await client.ensure_connected():
         return ReadyResponse()
 
     response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE

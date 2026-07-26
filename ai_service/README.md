@@ -6,8 +6,9 @@ Il est indépendant du Backoffice, de PostgreSQL et de l’API Produit.
 ## État actuel
 
 Le service possède un client officiel MCP Streamable HTTP. Une seule session
-est initialisée pendant le lifespan FastAPI, vérifie les cinq outils attendus,
-puis est partagée jusqu'à sa fermeture propre à l'arrêt.
+active est partagée pendant le lifespan FastAPI et vérifie les cinq outils
+attendus. Si elle est perdue, elle est fermée puis remplacée par une
+reconnexion bornée et synchronisée.
 
 `POST /query` utilise une orchestration déterministe. Le mode par défaut
 applique uniquement les règles locales. Un mode Ollama optionnel peut proposer
@@ -18,7 +19,8 @@ Ollama ne génère jamais la réponse métier et ne possède aucun mécanisme de
 tool calling. Sa sortie est validée par les modèles Pydantic existants puis
 par une vérification d'ancrage dans la question. L'orchestrateur conserve seul
 le choix parmi les cinq méthodes MCP et construit la réponse finale depuis les
-données MCP validées.
+données MCP validées. Une requête publique exécute au maximum un appel MCP
+métier.
 
 Routes disponibles :
 
@@ -61,7 +63,7 @@ appel MCP.
 
 - `200` : résultat MCP validé ou clarification sans donnée métier ;
 - `404` : produit ou branche absent ;
-- `422` : paramètres MCP invalides ;
+- `422` : requête ou paramètres invalides, avec un `ErrorResponse` stable ;
 - `502` : réponse MCP invalide ou autre erreur métier contrôlée ;
 - `503` : serveur MCP indisponible ;
 - `504` : délai MCP dépassé ;
@@ -90,6 +92,9 @@ AI_SERVICE_PORT=8001
 MCP_SERVER_URL=http://product-mcp-server:8000/mcp
 MCP_REQUEST_TIMEOUT_SECONDS=10
 MCP_MAX_CONCURRENT_CALLS=10
+MCP_RECONNECT_ATTEMPTS=3
+MCP_RECONNECT_INITIAL_DELAY_SECONDS=0.25
+MCP_RECONNECT_MAX_DELAY_SECONDS=2
 AI_INTENT_PROVIDER=rules
 OLLAMA_BASE_URL=http://ollama:11434
 OLLAMA_MODEL=gemma3:latest
@@ -98,7 +103,15 @@ OLLAMA_REQUEST_TIMEOUT_SECONDS=30
 
 La connexion Streamable HTTP est créée au démarrage du lifespan, jamais au
 simple chargement d'un module. Si MCP est indisponible, `/health` reste
-accessible et `/ready` retourne `503`.
+accessible, `/ready` retourne `503` et `/query` retourne une erreur structurée
+`503`. Le processus FastAPI reste démarré.
+
+Lorsqu'une session est absente, `/ready` et `/query` peuvent déclencher une
+reconnexion protégée par un verrou. Trois tentatives sont effectuées par
+défaut avec un backoff initial de 0,25 seconde, plafonné à 2 secondes. Une
+seule session est créée même si plusieurs requêtes demandent simultanément
+une récupération. Après le retour du MCP, aucune relance manuelle du service
+IA n'est nécessaire.
 
 `AI_INTENT_PROVIDER` accepte :
 
@@ -109,7 +122,8 @@ accessible et `/ready` retourne `503`.
 Le client HTTP Ollama est partagé pendant tout le lifespan et fermé à l'arrêt.
 Une panne, un timeout ou une sortie invalide conserve la clarification
 déterministe avec un statut `200`. Ollama n'est pas pris en compte par
-`/ready`.
+`/ready`. Cette route vérifie la connexion MCP et tente une récupération
+bornée si nécessaire, sans appel d'outil métier.
 
 Pour vérifier manuellement que le modèle configuré existe déjà localement :
 
@@ -118,7 +132,7 @@ ollama show gemma3:latest
 ```
 
 Cette commande ne télécharge aucun modèle. L'intégration d'Ollama à Docker
-Compose sera réalisée dans une phase ultérieure.
+Compose est décrite ci-dessous.
 
 ## Lancement local
 
@@ -126,14 +140,117 @@ Compose sera réalisée dans une phase ultérieure.
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m app.main
 ```
 
+## Docker
+
+L'image de production utilise Python 3.12 slim, installe uniquement
+`requirements.txt`, copie le paquet `app` et exécute Uvicorn avec un
+utilisateur non privilégié. Elle ne contient ni tests, ni environnement
+virtuel, ni fichier `.env`.
+
+Depuis la racine du dépôt :
+
+```bash
+cp .env.example .env
+# Remplacer les valeurs d'exemple sensibles avant le démarrage.
+
+docker compose config --quiet
+docker compose build ai-service
+docker compose up -d
+docker compose ps
+```
+
+Le mode Compose par défaut est `rules` et ne démarre pas Ollama. Le service IA
+est publié par défaut sur `http://localhost:8001`. Le port hôte peut être
+changé avec `AI_SERVICE_HOST_PORT`. Compose ordonne le démarrage du MCP avant
+l'IA mais n'exige pas qu'il soit sain : `/health` reste disponible en mode
+dégradé.
+
+Contrôles HTTP :
+
+```bash
+curl --fail http://localhost:8001/health
+curl --fail http://localhost:8001/ready
+
+curl --fail \
+  --header "Content-Type: application/json" \
+  --data '{"question":"liste les produits"}' \
+  http://localhost:8001/query
+```
+
+Les logs et l'arrêt propre s'obtiennent avec :
+
+```bash
+docker compose logs --no-color ai-service
+docker compose down
+```
+
+`docker compose down` conserve les volumes PostgreSQL et Ollama tant que
+l'option `--volumes` n'est pas ajoutée.
+
+## Ollama optionnel avec Docker Compose
+
+Ollama appartient au profil `ollama` et n'est jamais une dépendance de
+démarrage obligatoire du service IA :
+
+```bash
+docker compose --profile ollama up -d ollama
+curl --fail http://localhost:11434/api/tags
+```
+
+Le modèle doit être téléchargé explicitement par un opérateur :
+
+```bash
+docker compose --profile ollama exec ollama \
+  ollama pull gemma3:latest
+```
+
+Aucun build et aucun démarrage de service n'exécute cette commande
+automatiquement. Après vérification de la présence du modèle, le mode hybride
+peut être activé avec :
+
+```bash
+AI_INTENT_PROVIDER=ollama \
+  docker compose up -d --force-recreate ai-service
+```
+
+Si Ollama est absent, trop lent ou retourne une sortie invalide, `/query`
+conserve la clarification déterministe. `/health` et `/ready` ne dépendent pas
+de sa disponibilité.
+
+## Flux de données Compose
+
+```text
+client HTTP
+    -> ai-service:8001
+    -> product-mcp-server:8000/mcp
+    -> external-products-api:5000 ou backoffice:5000
+    -> PostgreSQL, uniquement depuis le Backoffice
+```
+
+`ai-service` ne reçoit aucune URL, clé ou variable PostgreSQL du Backoffice.
+Il contacte uniquement le serveur MCP pour les données métier. Ollama reçoit
+seulement la question à classifier, jamais une réponse MCP, un produit ou un
+stock.
+
+Les erreurs de validation de `POST /query`, y compris un JSON malformé,
+retournent HTTP `422` avec les cinq champs publics `success`, `answer`, `type`,
+`data` et `error`. Aucun détail Pydantic ou contenu brut invalide n'est
+exposé.
+
 ## Tests
 
-Les tests utilisent directement l'application ASGI et des doubles injectés
-autour du transport, de la session et du client MCP, sans serveur ni réseau :
+Les tests utilisent directement l'application ASGI, des doubles injectés et
+un transport officiel dirigé vers une adresse locale indisponible. Ils
+n'utilisent jamais Internet :
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python \
   -m pytest -v -p no:cacheprovider
+
+uv pip check --python .venv/bin/python
+
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python \
+  -m compileall -q app tests
 ```
 
 L'orchestration n'appelle jamais directement le Backoffice, l'API Produit ou

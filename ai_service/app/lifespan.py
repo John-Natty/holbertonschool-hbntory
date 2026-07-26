@@ -55,6 +55,13 @@ def create_lifespan(
                 settings.mcp_request_timeout_seconds
             ),
             max_concurrent_calls=settings.mcp_max_concurrent_calls,
+            reconnect_attempts=settings.mcp_reconnect_attempts,
+            reconnect_initial_delay_seconds=(
+                settings.mcp_reconnect_initial_delay_seconds
+            ),
+            reconnect_max_delay_seconds=(
+                settings.mcp_reconnect_max_delay_seconds
+            ),
         )
         application.state.mcp_client = client
         ollama_http_client: httpx.AsyncClient | None = None
