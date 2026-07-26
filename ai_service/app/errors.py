@@ -42,3 +42,19 @@ class MCPToolResponseError(MCPClientError):
         super().__init__(
             f"{self.message} Outil : {tool_name}. Code : {code}."
         )
+
+
+class IntentClassifierError(Exception):
+    """Classe de base des erreurs attendues du classificateur."""
+
+
+class IntentClassifierUnavailableError(IntentClassifierError):
+    """Signale que le fournisseur de classification est indisponible."""
+
+
+class IntentClassifierTimeoutError(IntentClassifierError):
+    """Signale le dépassement du délai de classification."""
+
+
+class IntentClassifierResponseError(IntentClassifierError):
+    """Signale une réponse de classification invalide."""

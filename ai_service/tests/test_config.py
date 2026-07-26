@@ -12,6 +12,10 @@ CONFIGURATION_VARIABLES = {
     "MCP_SERVER_URL",
     "MCP_REQUEST_TIMEOUT_SECONDS",
     "MCP_MAX_CONCURRENT_CALLS",
+    "AI_INTENT_PROVIDER",
+    "OLLAMA_BASE_URL",
+    "OLLAMA_MODEL",
+    "OLLAMA_REQUEST_TIMEOUT_SECONDS",
 }
 
 
@@ -39,6 +43,12 @@ def test_settings_use_docker_compose_defaults(monkeypatch):
     )
     assert settings.mcp_request_timeout_seconds == 10.0
     assert settings.mcp_max_concurrent_calls == 10
+    assert settings.ai_intent_provider == "rules"
+    assert str(settings.ollama_base_url) == (
+        "http://ollama:11434/"
+    )
+    assert settings.ollama_model == "gemma3:latest"
+    assert settings.ollama_request_timeout_seconds == 30.0
 
 
 def test_settings_read_environment(monkeypatch):
@@ -59,6 +69,16 @@ def test_settings_read_environment(monkeypatch):
         "MCP_MAX_CONCURRENT_CALLS",
         "4",
     )
+    monkeypatch.setenv("AI_INTENT_PROVIDER", "ollama")
+    monkeypatch.setenv(
+        "OLLAMA_BASE_URL",
+        "http://ollama.test:11435",
+    )
+    monkeypatch.setenv("OLLAMA_MODEL", "gemma3:4b")
+    monkeypatch.setenv(
+        "OLLAMA_REQUEST_TIMEOUT_SECONDS",
+        "7.5",
+    )
 
     settings = Settings()
 
@@ -69,6 +89,12 @@ def test_settings_read_environment(monkeypatch):
     )
     assert settings.mcp_request_timeout_seconds == 2.5
     assert settings.mcp_max_concurrent_calls == 4
+    assert settings.ai_intent_provider == "ollama"
+    assert str(settings.ollama_base_url) == (
+        "http://ollama.test:11435/"
+    )
+    assert settings.ollama_model == "gemma3:4b"
+    assert settings.ollama_request_timeout_seconds == 7.5
 
 
 def test_settings_reject_extra_field(monkeypatch):
@@ -95,6 +121,15 @@ def test_settings_reject_extra_field(monkeypatch):
         ("mcp_max_concurrent_calls", 0),
         ("mcp_max_concurrent_calls", -1),
         ("mcp_max_concurrent_calls", True),
+        ("ai_intent_provider", "unknown"),
+        ("ai_intent_provider", "OLLAMA"),
+        ("ollama_base_url", "ftp://ollama.test"),
+        ("ollama_model", "   "),
+        ("ollama_request_timeout_seconds", 0),
+        ("ollama_request_timeout_seconds", -1),
+        ("ollama_request_timeout_seconds", True),
+        ("ollama_request_timeout_seconds", float("inf")),
+        ("ollama_request_timeout_seconds", float("nan")),
     ],
 )
 def test_settings_reject_invalid_values(

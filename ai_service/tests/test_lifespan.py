@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from app.config import Settings
 from app.errors import MCPConnectionError
 from app.main import create_app
+from app.services.intent_router import RuleBasedIntentRouter
 from app.services.query_service import MCPQueryService
 
 
@@ -123,6 +124,11 @@ async def test_lifespan_builds_connects_and_closes_once() -> None:
             application.state.query_service,
             MCPQueryService,
         )
+        assert isinstance(
+            application.state.intent_router,
+            RuleBasedIntentRouter,
+        )
+        assert application.state.intent_classifier is None
         assert lifecycle_client.connect_count == 1
         assert lifecycle_client.close_count == 0
         assert factory.calls == [

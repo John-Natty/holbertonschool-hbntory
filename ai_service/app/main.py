@@ -1,17 +1,25 @@
 """Point d'entrée FastAPI du service IA HBntory."""
 
+import httpx
 import uvicorn
 from fastapi import FastAPI
 
 from app.api.routes import router
 from app.clients.mcp_client import ProductMCPClient
 from app.config import Settings, get_settings
-from app.lifespan import MCPClientFactory, create_lifespan
+from app.lifespan import (
+    MCPClientFactory,
+    OllamaHTTPClientFactory,
+    create_lifespan,
+)
 
 
 def create_app(
     settings: Settings | None = None,
     mcp_client_factory: MCPClientFactory = ProductMCPClient,
+    ollama_http_client_factory: OllamaHTTPClientFactory = (
+        httpx.AsyncClient
+    ),
 ) -> FastAPI:
     """Crée l'application et injecte le lifespan du client MCP."""
 
@@ -22,6 +30,7 @@ def create_app(
         lifespan=create_lifespan(
             resolved_settings,
             mcp_client_factory,
+            ollama_http_client_factory,
         ),
     )
     application.include_router(router)

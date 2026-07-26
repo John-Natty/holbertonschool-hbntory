@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 import math
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
     AnyHttpUrl,
@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     )
     mcp_request_timeout_seconds: PositiveFiniteFloat = 10.0
     mcp_max_concurrent_calls: PositiveInt = 10
+    ai_intent_provider: Literal["rules", "ollama"] = "rules"
+    ollama_base_url: AnyHttpUrl = "http://ollama:11434"
+    ollama_model: NonEmptyString = "gemma3:latest"
+    ollama_request_timeout_seconds: PositiveFiniteFloat = 30.0
 
     @field_validator(
         "mcp_request_timeout_seconds",
@@ -86,6 +90,29 @@ class Settings(BaseSettings):
         if isinstance(value, bool):
             raise ValueError(
                 "La concurrence MCP doit être un entier positif."
+            )
+
+        return value
+
+    @field_validator(
+        "ollama_request_timeout_seconds",
+        mode="before",
+    )
+    @classmethod
+    def reject_invalid_ollama_timeout(
+        cls,
+        value: object,
+    ) -> object:
+        """Refuse une durée Ollama booléenne ou non finie."""
+
+        if isinstance(value, bool):
+            raise ValueError(
+                "Le délai Ollama doit être un nombre positif."
+            )
+
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(
+                "Le délai Ollama doit être un nombre fini."
             )
 
         return value
