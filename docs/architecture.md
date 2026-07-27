@@ -267,6 +267,13 @@ Le service doit répondre au minimum aux questions suivantes :
 Lorsque les outils ne fournissent pas suffisamment d’informations,
 le service doit le signaler clairement.
 
+Chaque requête `POST /api/query` effectue au maximum un appel MCP métier.
+`GET /health` décrit uniquement le processus HTTP. `GET /ready` vérifie la
+session MCP et déclenche une reconnexion bornée lorsque celle-ci a été perdue.
+Le service IA démarre en mode dégradé si MCP est absent et récupère après son
+retour sans redémarrage manuel. Les erreurs de validation HTTP 422 utilisent
+le même contrat structuré que les autres erreurs publiques.
+
 ---
 
 ### 4.6 Client web public
@@ -282,6 +289,8 @@ Il contient :
 - une gestion simple des erreurs.
 
 Il communique avec le service AI Query par REST.
+En développement, son origine `http://localhost:8080` est explicitement
+autorisée par la politique CORS du service IA.
 
 Chaque question est indépendante et aucun historique de conversation
 n’est conservé dans le MVP.
@@ -306,7 +315,7 @@ flowchart TB
 
     PublicUser --> Client
     Client -->|POST /api/query| AIService
-    AIService -->|Appels MCP| MCP
+    AIService -->|Au plus un appel MCP métier| MCP
 
     MCP -->|Outils produits| ProductAPI
     MCP -->|HTTP /internal/stocks/*| Backoffice
@@ -406,16 +415,14 @@ Dans quelle branche le produit 12 est-il disponible ?
 Parcours :
 
 ```text
-1. Le client web envoie la question au service AI Query.
+1. Le client web envoie la question avec `POST /api/query`.
 2. Le service IA identifie le produit demandé.
-3. L’agent appelle l’outil MCP de détail produit.
-4. Le MCP interroge l’API Produit externe.
-5. L’agent appelle l’outil MCP de recherche de stock.
-6. Le MCP interroge l’API interne du Backoffice.
-7. Le Backoffice consulte PostgreSQL.
-8. Les résultats sont retournés à l’agent.
-9. L’agent formule une réponse basée sur les données.
-10. Le client web affiche la réponse.
+3. L’orchestrateur appelle uniquement `get_stock_by_product`.
+4. Le MCP interroge l’API interne du Backoffice.
+5. Le Backoffice consulte PostgreSQL.
+6. Le résultat validé est retourné au service IA.
+7. `AnswerBuilder` construit la réponse sans donnée inventée.
+8. Le client web affiche la réponse.
 ```
 
 Diagramme :
@@ -426,22 +433,17 @@ sequenceDiagram
     participant Client as Client web
     participant AI as AI Query Service
     participant MCP as Serveur MCP
-    participant Products as API Produit
     participant Backoffice as API interne Backoffice
     participant DB as PostgreSQL
 
     User->>Client: Pose une question
     Client->>AI: POST /api/query
-    AI->>MCP: Appel outil produit
-    MCP->>Products: Requête HTTP
-    Products-->>MCP: Informations produit
-    MCP-->>AI: Résultat produit
-    AI->>MCP: Appel outil stock
+    AI->>MCP: get_stock_by_product
     MCP->>Backoffice: Requête de stock
     Backoffice->>DB: Requête SQLAlchemy
     DB-->>Backoffice: Quantités disponibles
     Backoffice-->>MCP: Réponse structurée
-    MCP-->>AI: Résultat stock
+    MCP-->>AI: Résultat validé
     AI-->>Client: Réponse JSON
     Client-->>User: Affichage de la réponse
 ```

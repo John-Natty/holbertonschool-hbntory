@@ -6,6 +6,20 @@ services:
     ports:
       # Port ordinateur : port interne du conteneur
       - "${PRODUCT_API_PORT:-5001}:5000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen(
+          'http://localhost:5000/api/v1/products?limit=1&offset=0',
+          timeout=2).read()
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
     restart: unless-stopped
 
   database:
@@ -18,41 +32,138 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - database_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     restart: unless-stopped
 
-  # --- Services à compléter progressivement -------------------------------
+  backoffice:
+    build:
+      context: ./backoffice
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SECRET_KEY: ${SECRET_KEY}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      PRODUCT_API_BASE_URL: http://external-products-api:5000
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+    command:
+      - sh
+      - -c
+      - >-
+        python -m flask --app app:create_app db upgrade &&
+        python -m flask --app app:create_app run
+        --host=0.0.0.0 --port=5000
+    depends_on:
+      database:
+        condition: service_healthy
+      external-products-api:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import socket;
+          socket.create_connection(('localhost', 5000), 2).close()
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
 
-  # backoffice:
-  #   build: ./backoffice
-  #   env_file:
-  #     - .env
-  #   depends_on:
-  #     - database
-  #     - external-products-api
-  #   ports:
-  #     - "5000:5000"
-  #   restart: unless-stopped
+  product-mcp-server:
+    build:
+      context: ./product_mcp_server
+    environment:
+      PRODUCT_API_BASE_URL: http://external-products-api:5000
+      BACKOFFICE_INTERNAL_URL: http://backoffice:5000
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8000
+    depends_on:
+      backoffice:
+        condition: service_healthy
+      external-products-api:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import socket;
+          socket.create_connection(('localhost', 8000), 2).close()
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
 
-  # product-mcp-server:
-  #   build: ./product_mcp_server
-  #   env_file:
-  #     - .env
-  #   depends_on:
-  #     - external-products-api
-  #     - backoffice
-  #   ports:
-  #     - "8000:8000"
-  #   restart: unless-stopped
+  ai-service:
+    build:
+      context: ./ai_service
+    environment:
+      AI_SERVICE_HOST: 0.0.0.0
+      AI_SERVICE_PORT: 8001
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080}
+      MCP_SERVER_URL: http://product-mcp-server:8000/mcp
+      MCP_REQUEST_TIMEOUT_SECONDS: 10
+      MCP_MAX_CONCURRENT_CALLS: 10
+      MCP_RECONNECT_ATTEMPTS: 3
+      MCP_RECONNECT_INITIAL_DELAY_SECONDS: 0.25
+      MCP_RECONNECT_MAX_DELAY_SECONDS: 2
+      AI_INTENT_PROVIDER: ${AI_INTENT_PROVIDER:-rules}
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:latest}
+      OLLAMA_REQUEST_TIMEOUT_SECONDS: 30
+    depends_on:
+      product-mcp-server:
+        condition: service_started
+    ports:
+      - "${AI_SERVICE_HOST_PORT:-8001}:8001"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen(
+          'http://localhost:8001/health', timeout=2).read()
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
 
-  # ai-service:
-  #   build: ./ai_service
-  #   env_file:
-  #     - .env
-  #   depends_on:
-  #     - product-mcp-server
-  #   ports:
-  #     - "8001:8001"
-  #   restart: unless-stopped
+  ollama:
+    image: ollama/ollama:latest
+    profiles:
+      - ollama
+    ports:
+      - "${OLLAMA_HOST_PORT:-11434}:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test:
+        - CMD
+        - ollama
+        - list
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
 
   # client-web:
   #   build: ./client_web
@@ -64,3 +175,4 @@ services:
 
 volumes:
   database_data:
+  ollama-data:
