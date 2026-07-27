@@ -620,12 +620,12 @@ Les décisions détaillées sont documentées dans :
 
 ## 16. Stratégie de retrait atomique du stock
 
-Les retraits de stock seront exécutés dans une transaction.
+Les retraits de stock sont exécutés dans une transaction.
 
-La mise à jour ne sera appliquée que si la quantité disponible est
+La mise à jour est appliquée uniquement si la quantité disponible est
 supérieure ou égale à la quantité demandée.
 
-L’opération suivra le principe suivant :
+L’opération suit le principe suivant :
 
 1. valider que la quantité demandée est un entier strictement positif ;
 2. exécuter une mise à jour conditionnelle ;
@@ -640,7 +640,7 @@ négatif.
 
 ## 17. API interne de consultation des stocks
 
-Le Backoffice exposera une API interne en lecture seule utilisée
+Le Backoffice expose une API interne en lecture seule utilisée
 uniquement par le serveur MCP.
 
 Endpoints prévus :

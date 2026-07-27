@@ -22,6 +22,11 @@ le choix parmi les cinq méthodes MCP et construit la réponse finale depuis les
 données MCP validées. Une requête publique exécute au maximum un appel MCP
 métier.
 
+Les réponses de stock par branche citent directement chaque `product_id` et sa
+quantité à partir de la réponse MCP déjà validée. Les listes d'achats nomment
+toutes les branches satisfaisantes. Cette mise en forme ne déclenche jamais de
+second appel MCP et n'invente aucun nom de produit.
+
 Routes disponibles :
 
 - `GET /health` : état du processus HTTP ;

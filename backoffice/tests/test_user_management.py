@@ -374,6 +374,42 @@ class UserManagementTestCase(unittest.TestCase):
             self.assertIsNotNone(user)
             self.assertFalse(user.is_active)
 
+    def test_utilisateur_desactive_par_admin_ne_se_connecte_plus(self):
+        """Refuse la connexion après une désactivation administrative."""
+
+        self.login(
+            "superadmin",
+            "MotDePasseAdmin123!",
+        )
+
+        action_path = (
+            f"/admin/users/{self.common_user_id}/status"
+        )
+        response = self.post_form(
+            "/admin/users",
+            action_path,
+            {},
+        )
+
+        self.assertEqual(response.status_code, 302)
+
+        with self.client.session_transaction() as session:
+            session.clear()
+
+        response = self.login(
+            "toulouse_user",
+            "MotDePasseToulouse123!",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            "Nom d&#39;utilisateur ou mot de passe incorrect.",
+            response.get_data(as_text=True),
+        )
+
+        with self.client.session_transaction() as session:
+            self.assertNotIn("_user_id", session)
+
     def test_admin_reactive_un_utilisateur(self):
         """Vérifie la réactivation d'un utilisateur."""
         with self.app.app_context():

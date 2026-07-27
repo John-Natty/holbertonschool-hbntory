@@ -128,24 +128,23 @@ class AnswerBuilder:
     ) -> StockByBranchResponse:
         """Construit la réponse de contenu d'une branche."""
 
-        stock_count = len(data.stocks)
-        branch_id = data.branch.id
+        branch_name = data.branch.name
 
-        if stock_count == 0:
+        if not data.stocks:
             answer = (
-                f"La branche {branch_id} ne possède actuellement "
+                f"La branche {branch_name} ne possède actuellement "
                 "aucun produit en stock."
             )
-        elif stock_count == 1:
-            answer = (
-                f"La branche {branch_id} possède 1 produit référencé "
-                "en stock."
-            )
         else:
-            answer = (
-                f"La branche {branch_id} possède {stock_count} "
-                "produits référencés en stock."
+            stock_lines = "\n".join(
+                (
+                    f"- produit {stock.product_id} : "
+                    f"{stock.quantity} "
+                    f"{'unité' if stock.quantity == 1 else 'unités'}"
+                )
+                for stock in data.stocks
             )
+            answer = f"La branche {branch_name} possède :\n{stock_lines}"
 
         return StockByBranchResponse(
             answer=answer,
@@ -165,14 +164,21 @@ class AnswerBuilder:
                 "Aucune branche ne peut satisfaire entièrement "
                 "cette liste d’achats."
             )
-        elif branch_count == 1:
-            answer = (
-                "1 branche peut satisfaire entièrement cette "
-                "liste d’achats."
-            )
         else:
+            branch_names = [
+                branch.branch_name
+                for branch in data.matching_branches
+            ]
+            joined_names = _join_french_list(branch_names)
+
+        if branch_count == 1:
             answer = (
-                f"{branch_count} branches peuvent satisfaire "
+                f"La branche {joined_names} peut satisfaire entièrement "
+                "cette liste d’achats."
+            )
+        elif branch_count > 1:
+            answer = (
+                f"Les branches {joined_names} peuvent satisfaire "
                 "entièrement cette liste d’achats."
             )
 
@@ -208,3 +214,12 @@ class AnswerBuilder:
                 message=message,
             ),
         )
+
+
+def _join_french_list(values: list[str]) -> str:
+    """Joint une liste non vide avec une conjonction française."""
+
+    if len(values) == 1:
+        return values[0]
+
+    return f"{', '.join(values[:-1])} et {values[-1]}"

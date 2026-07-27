@@ -358,7 +358,8 @@ async def application_client(
             ),
             "by_branch",
             (
-                "La branche 3 possède 1 produit référencé en stock."
+                "La branche Carcassonne possède :\n"
+                "- produit 12 : 8 unités"
             ),
         ),
         (
@@ -381,7 +382,7 @@ async def application_client(
             ),
             "shopping",
             (
-                "1 branche peut satisfaire entièrement cette "
+                "La branche Toulouse peut satisfaire entièrement cette "
                 "liste d’achats."
             ),
         ),
@@ -602,6 +603,50 @@ async def test_query_maps_expected_errors_to_http(
     assert body["error"]["code"] == expected_code
     assert "contenu technique" not in response.text
     assert len(mcp_client.calls) == 1
+
+
+async def test_unknown_product_returns_clear_public_response() -> None:
+    """Explique clairement qu'un produit demandé est introuvable."""
+
+    mcp_client = FakeApplicationMCPClient(
+        method_error=MCPToolResponseError(
+            "get_product_details",
+            "product_not_found",
+        )
+    )
+
+    async with application_client(mcp_client) as (
+        _application,
+        client,
+    ):
+        response = await client.post(
+            "/api/query",
+            json={
+                "question": "détails du produit 999999",
+            },
+        )
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "success": False,
+        "answer": "La ressource demandée n’a pas été trouvée.",
+        "type": "error",
+        "data": None,
+        "error": {
+            "code": "resource_not_found",
+            "message": (
+                "Le produit ou la branche demandé n’existe pas."
+            ),
+        },
+    }
+    assert mcp_client.calls == [
+        (
+            "get_product_details",
+            {
+                "product_id": 999999,
+            },
+        )
+    ]
 
 
 async def test_query_returns_generic_500_for_unexpected_bug(

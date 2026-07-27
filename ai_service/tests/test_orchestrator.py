@@ -388,7 +388,7 @@ async def test_answer_builder_uses_only_validated_product_data() -> None:
                 stocks=[],
             ),
             (
-                "La branche 3 ne possède actuellement aucun "
+                "La branche Carcassonne ne possède actuellement aucun "
                 "produit en stock."
             ),
         ),
@@ -431,6 +431,122 @@ async def test_orchestrator_builds_honest_empty_responses(
 
     assert response.answer == expected_answer
     assert len(client.calls) == 1
+
+
+async def test_stock_by_branch_lists_each_validated_stock() -> None:
+    """Liste les identifiants et quantités sans appel supplémentaire."""
+
+    router = FakeIntentRouter(StockByBranchIntent(branch_id=3))
+    client = FakeMCPDataClient()
+    client.by_branch = StockByBranchData(
+        branch=BranchData(
+            id=3,
+            name="Carcassonne",
+        ),
+        stocks=[
+            {
+                "product_id": 4,
+                "quantity": 1,
+            },
+            {
+                "product_id": 7,
+                "quantity": 5,
+            },
+        ],
+    )
+    orchestrator = QueryOrchestrator(
+        router,
+        client,
+        AnswerBuilder(),
+    )
+
+    response = await orchestrator.handle("stock de la branche 3")
+
+    assert response.answer == (
+        "La branche Carcassonne possède :\n"
+        "- produit 4 : 1 unité\n"
+        "- produit 7 : 5 unités"
+    )
+    assert response.data is client.by_branch
+    assert client.calls == [
+        (
+            "get_stock_by_branch",
+            {
+                "branch_id": 3,
+            },
+        )
+    ]
+
+
+async def test_shopping_list_names_each_matching_branch() -> None:
+    """Nomme toutes les branches validées sans inventer de résultat."""
+
+    router = FakeIntentRouter(
+        ShoppingListIntent(
+            items=[
+                {
+                    "product_id": 12,
+                    "quantity": 2,
+                }
+            ]
+        )
+    )
+    client = FakeMCPDataClient()
+    client.shopping = ShoppingListData(
+        matching_branches=[
+            {
+                "branch_id": 1,
+                "branch_name": "Toulouse",
+                "items": [
+                    {
+                        "product_id": 12,
+                        "requested_quantity": 2,
+                        "available_quantity": 8,
+                    }
+                ],
+            },
+            {
+                "branch_id": 2,
+                "branch_name": "Carcassonne",
+                "items": [
+                    {
+                        "product_id": 12,
+                        "requested_quantity": 2,
+                        "available_quantity": 3,
+                    }
+                ],
+            },
+        ]
+    )
+    orchestrator = QueryOrchestrator(
+        router,
+        client,
+        AnswerBuilder(),
+    )
+
+    response = await orchestrator.handle(
+        "où acheter le produit 12 x2"
+    )
+
+    assert response.answer == (
+        "Les branches Toulouse et Carcassonne peuvent satisfaire "
+        "entièrement cette liste d’achats."
+    )
+    assert response.data is client.shopping
+    assert "Albi" not in response.answer
+    assert client.calls == [
+        (
+            "check_shopping_list",
+            {
+                "items": [
+                    {
+                        "product_id": 12,
+                        "quantity": 2,
+                    }
+                ],
+            },
+        )
+    ]
 
 
 async def test_unsupported_intent_never_calls_mcp() -> None:

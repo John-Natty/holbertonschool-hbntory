@@ -119,6 +119,39 @@ function formatAnswerHtml(data) {
         );
     }
 
+    if (
+        data.type === "shopping_list"
+        && data.data.matching_branches.length > 1
+    ) {
+        const names = data.data.matching_branches.map(
+            (branch) => escapeHtml(branch.branch_name)
+        );
+
+        return (
+            "Les branches " + joinFrenchList(names)
+            + " peuvent satisfaire entièrement cette liste d’achats."
+        );
+    }
+
+    if (data.type === "stock_by_branch" && data.data.stocks.length > 0) {
+        const branchName = escapeHtml(data.data.branch.name);
+        const stockItems = data.data.stocks.map(function (stock) {
+            const productId = escapeHtml(String(stock.product_id));
+            const quantity = escapeHtml(String(stock.quantity));
+            const unit = stock.quantity === 1 ? "unité" : "unités";
+
+            return (
+                "<li>Produit " + productId + " : "
+                + quantity + " " + unit + "</li>"
+            );
+        }).join("");
+
+        return (
+            "La branche <strong>" + branchName + "</strong> possède :"
+            + '<ul class="answer-list">' + stockItems + "</ul>"
+        );
+    }
+
     return escaped;
 }
 
@@ -147,15 +180,21 @@ async function askQuestion(question) {
         },
         body: JSON.stringify({ question: question }),
     });
+    const data = await response.json();
 
-    // Une réponse HTTP en erreur est signalée clairement.
+    // Conserve uniquement le message public structuré du service IA.
     if (!response.ok) {
-        throw new Error(
-            "Le service a répondu avec le code " + response.status + "."
+        const publicError = new Error(
+            data.answer
+            || data.error?.message
+            || "Une erreur est survenue."
         );
+        publicError.isPublic = true;
+
+        throw publicError;
     }
 
-    return response.json();
+    return data;
 }
 
 
@@ -186,11 +225,13 @@ async function handleSubmit(event) {
             showError(data.answer || "Une erreur est survenue.");
         }
 
-    } catch (networkError) {
-        // Couvre les pannes réseau et les réponses illisibles.
-        showError(
-            "Impossible de contacter le service. Réessayez plus tard."
-        );
+    } catch (requestError) {
+        // Ne montre jamais le détail technique d'une panne réseau ou JSON.
+        const message = requestError.isPublic
+            ? requestError.message
+            : "Impossible de contacter le service. Réessayez plus tard.";
+
+        showError(message);
 
     } finally {
         // Réactive toujours le formulaire, même en cas d'erreur.

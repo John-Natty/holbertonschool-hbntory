@@ -283,6 +283,11 @@ body {
     margin-bottom: 0.6rem;
 }
 
+.answer-list {
+    margin: 0.75rem 0 0;
+    padding-left: 1.5rem;
+}
+
 /* Erreur : fond rouge clair, accent rouge pour signaler */
 .error {
     padding: 1.1rem 1.2rem;

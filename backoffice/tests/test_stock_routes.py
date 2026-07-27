@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Tests des routes de gestion du stock d'une branche."""
 
+from unittest.mock import Mock
+
 import pytest
 
 from app import create_app
@@ -117,6 +119,47 @@ def test_common_user_refuse_sur_une_autre_branche(stock_app, client):
     assert reponse.status_code == 403
 
 
+@pytest.mark.parametrize("action", ["add", "remove"])
+def test_common_user_ne_modifie_pas_une_autre_branche(
+    stock_app,
+    client,
+    monkeypatch,
+    action,
+):
+    """Refuse les opérations POST sur le stock d'une autre branche."""
+
+    branch_id = stock_app.config["CARCASSONNE_ID"]
+
+    with stock_app.app_context():
+        ops.add_stock(branch_id, PRODUCT_ID, 10)
+
+    product_lookup = Mock(
+        return_value={
+            "id": PRODUCT_ID,
+            "name": "Produit de test",
+        }
+    )
+    monkeypatch.setattr(
+        "app.stock.routes.product_api.get_product",
+        product_lookup,
+    )
+    login(client, "employe", COMMON_PASSWORD)
+
+    reponse = client.post(
+        f"/branches/{branch_id}/stock/{action}",
+        data={
+            "product_id": PRODUCT_ID,
+            "amount": 1,
+        },
+    )
+
+    assert reponse.status_code == 403
+    product_lookup.assert_not_called()
+
+    with stock_app.app_context():
+        assert ops.get_stock_quantity(branch_id, PRODUCT_ID) == 10
+
+
 def test_admin_refuse_sur_le_stock(stock_app, client):
     """Un administrateur n'a pas le droit de gérer le stock."""
 
@@ -129,9 +172,59 @@ def test_admin_refuse_sur_le_stock(stock_app, client):
     assert reponse.status_code == 403
 
 
-def test_ajout_de_stock(stock_app, client):
+@pytest.mark.parametrize("action", ["add", "remove"])
+def test_admin_ne_modifie_pas_le_stock(
+    stock_app,
+    client,
+    monkeypatch,
+    action,
+):
+    """Refuse directement les opérations POST de stock à l'admin."""
+
+    branch_id = stock_app.config["TOULOUSE_ID"]
+
+    with stock_app.app_context():
+        ops.add_stock(branch_id, PRODUCT_ID, 10)
+
+    product_lookup = Mock(
+        return_value={
+            "id": PRODUCT_ID,
+            "name": "Produit de test",
+        }
+    )
+    monkeypatch.setattr(
+        "app.stock.routes.product_api.get_product",
+        product_lookup,
+    )
+    login(client, "admin", ADMIN_PASSWORD)
+
+    reponse = client.post(
+        f"/branches/{branch_id}/stock/{action}",
+        data={
+            "product_id": PRODUCT_ID,
+            "amount": 1,
+        },
+    )
+
+    assert reponse.status_code == 403
+    product_lookup.assert_not_called()
+
+    with stock_app.app_context():
+        assert ops.get_stock_quantity(branch_id, PRODUCT_ID) == 10
+
+
+def test_ajout_de_stock(stock_app, client, monkeypatch):
     """Un common user ajoute une quantité au stock de sa branche."""
 
+    monkeypatch.setattr(
+        "app.stock.routes.product_api.get_product",
+        Mock(
+            return_value={
+                "id": PRODUCT_ID,
+                "name": "Produit de test",
+            }
+        ),
+    )
     login(client, "employe", COMMON_PASSWORD)
     branch_id = stock_app.config["TOULOUSE_ID"]
 

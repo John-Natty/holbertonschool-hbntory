@@ -1,0 +1,32 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+RUN groupadd --system backoffice-tests \
+    && useradd \
+        --system \
+        --gid backoffice-tests \
+        --home-dir /app \
+        --no-create-home \
+        backoffice-tests
+
+COPY requirements.txt requirements-dev.txt ./
+
+RUN python -m pip install \
+    --no-cache-dir \
+    -r requirements.txt \
+    -r requirements-dev.txt
+
+COPY --chown=backoffice-tests:backoffice-tests app ./app
+COPY --chown=backoffice-tests:backoffice-tests migrations ./migrations
+COPY --chown=backoffice-tests:backoffice-tests tests ./tests
+COPY --chown=backoffice-tests:backoffice-tests pytest.ini ./
+
+USER backoffice-tests:backoffice-tests
+
+CMD ["python", "-m", "pytest", "-v", "-p", "no:cacheprovider"]

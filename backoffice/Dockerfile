@@ -21,6 +21,7 @@ RUN python -m pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=backoffice:backoffice app ./app
 COPY --chown=backoffice:backoffice migrations ./migrations
+COPY --chown=backoffice:backoffice seed.py ./seed.py
 
 USER backoffice:backoffice
 
