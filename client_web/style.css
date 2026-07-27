@@ -5,6 +5,9 @@
     --blue: #0aa7c2;
     --cyan: #10c6e6;
     --red: #c81e3c;
+    --panel: #0f1117;
+    --text: #e9e7d8;
+    --muted: #b8b49a;
 }
 
 * {
@@ -22,7 +25,10 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 2rem 1rem;
+    /* Marge minime sur les quatre côtés : les panneaux latéraux doivent
+       rester à quelques millimètres du bord de la page, haut et bas
+       compris. */
+    padding: 0.6rem;
     overflow-x: hidden;
 }
 
@@ -52,12 +58,31 @@ body {
     opacity: 0.3;
 }
 
-/* Panneau central jaune aux angles coupés */
-.app {
+/* Conteneur des trois panneaux : commandes, assistant, catalogue.
+   Les colonnes latérales ont le MÊME poids (ce qui garantit que le
+   panneau central reste exactement au milieu de l'écran). Les poids
+   « fr » forcent les colonnes à toujours remplir 100 % de la largeur
+   disponible (jusqu'au plafond de .layout) : pas de marge morte entre
+   les panneaux latéraux et le bord de la page, quelle que soit la
+   taille de l'écran. */
+.layout {
     position: relative;
     z-index: 2;
     width: 100%;
-    max-width: 640px;
+    max-width: 1700px;
+    display: grid;
+    grid-template-columns:
+        minmax(220px, 320fr)
+        minmax(0, 980fr)
+        minmax(220px, 320fr);
+    align-items: center;
+    gap: 1.4rem;
+}
+
+/* Panneau central jaune aux angles coupés : l'assistant IA */
+.app {
+    position: relative;
+    width: 100%;
     background-color: var(--card);
     color: var(--ink);
     border: 2px solid var(--ink);
@@ -332,5 +357,203 @@ body {
     .glitch::before,
     .glitch::after {
         display: none;
+    }
+}
+
+/* ---- Panneaux latéraux (commandes à gauche, catalogue à droite) -------- */
+/* Sombres et discrets pour que le panneau central jaune reste le point
+   d'attention : ce sont des aide-mémoire, pas des interfaces d'action. */
+
+.side-panel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    /* Remplit la hauteur de la fenêtre (moins la marge de body des deux
+       côtés) : les panneaux vont jusqu'en haut et en bas de l'écran.
+       Même valeur pour les deux panneaux, et chacun défile en interne
+       (voir .cmd-list / .catalog-list) au lieu d'imposer sa taille à
+       l'autre panneau ou de grandir sans limite avec son contenu. */
+    height: calc(100vh - 1.2rem);
+    background-color: var(--panel);
+    color: var(--text);
+    border: 1px solid rgba(244, 236, 0, 0.35);
+    padding: 1.5rem 1.3rem;
+    clip-path: polygon(
+        0 10px, 10px 0,
+        calc(100% - 18px) 0, 100% 18px,
+        100% 100%, 18px 100%, 0 calc(100% - 18px)
+    );
+    box-shadow: 0 0 35px rgba(0, 0, 0, 0.5);
+}
+
+.side-panel::before {
+    content: "";
+    position: absolute;
+    top: 18px;
+    bottom: 18px;
+    left: 0;
+    width: 3px;
+    background: var(--blue);
+}
+
+.side-title {
+    font-family: "Arial Black", "Arial Bold", system-ui, sans-serif;
+    font-size: 1rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--card);
+    margin-bottom: 0.7rem;
+}
+
+.side-title::before {
+    content: ">> ";
+    color: var(--blue);
+}
+
+.side-hint {
+    font-size: 0.72rem;
+    color: var(--muted);
+    line-height: 1.5;
+    margin-bottom: 1.2rem;
+}
+
+.side-hint code {
+    color: var(--cyan);
+    font-weight: bold;
+}
+
+/* ---- Zone déroulante commune aux deux panneaux latéraux ----------------- */
+/* Remplit l'espace restant sous le titre et l'indication, à hauteur
+   FIXE (héritée de .side-panel), et défile en interne au-delà. C'est le
+   « menu déroulant » demandé : même comportement dans les deux panneaux. */
+
+.cmd-list,
+.catalog-list {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+/* ---- Commandes (panneau gauche) ----------------------------------------- */
+
+.cmd-group {
+    margin-bottom: 1.2rem;
+}
+
+.cmd-group h3 {
+    font-size: 0.66rem;
+    font-weight: bold;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    margin-bottom: 0.5rem;
+}
+
+.cmd-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    font-family: inherit;
+    font-size: 0.76rem;
+    color: var(--text);
+    background-color: rgba(244, 236, 0, 0.06);
+    border: 1px solid rgba(244, 236, 0, 0.25);
+    padding: 0.45rem 0.6rem;
+    margin-bottom: 0.4rem;
+    cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.cmd-item:hover {
+    background-color: rgba(244, 236, 0, 0.16);
+    border-color: var(--card);
+    color: var(--card);
+}
+
+/* ---- Catalogue (panneau droit) ------------------------------------------ */
+
+.catalog-list {
+    list-style: none;
+}
+
+.catalog-item {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    text-align: left;
+    font-family: inherit;
+    color: var(--text);
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid rgba(233, 231, 216, 0.12);
+    padding: 0.55rem 0.2rem;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+.catalog-item:hover {
+    background-color: rgba(16, 198, 230, 0.08);
+}
+
+.catalog-item-id {
+    font-size: 0.68rem;
+    font-weight: bold;
+    color: var(--blue);
+    letter-spacing: 0.05em;
+}
+
+.catalog-item-name {
+    font-size: 0.82rem;
+    color: var(--text);
+    margin: 0.1rem 0;
+}
+
+.catalog-item-price {
+    font-size: 0.72rem;
+    color: var(--muted);
+}
+
+/* ---- Repli en une colonne sur petit et moyen écran ---------------------- */
+
+@media (max-width: 1080px) {
+    .layout {
+        grid-template-columns: 1fr;
+        max-width: 640px;
+    }
+
+    /* Empilés, les panneaux latéraux gardent une hauteur bornée plus
+       courte pour laisser de la place aux trois panneaux à la suite. */
+    .side-panel {
+        height: 50vh;
+    }
+
+    /* L'assistant reste la première chose visible, quel que soit
+       l'ordre des panneaux dans le document. */
+    .app {
+        order: -1;
+    }
+}
+
+/* ---- Ajustements pour très petits écrans -------------------------------- */
+
+@media (max-width: 480px) {
+    .app {
+        padding: 1.4rem;
+    }
+
+    .side-panel {
+        padding: 1.1rem 1rem;
+    }
+
+    .question-form {
+        flex-wrap: wrap;
+    }
+
+    .question-input {
+        min-width: 0;
+    }
+
+    .submit-button {
+        flex: 1;
     }
 }

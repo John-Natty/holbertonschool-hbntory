@@ -12,64 +12,144 @@
     <canvas id="matrix" aria-hidden="true"></canvas>
     <div class="fx-scanlines" aria-hidden="true"></div>
 
-    <main class="app">
-        <!-- Barre d'état décorative en haut du panneau -->
-        <div class="statusbar" aria-hidden="true">
-            <span class="statusbar-dot"></span>
-            <span>SYSTEM ONLINE</span>
-            <span class="statusbar-tag">HBNTORY // C-29</span>
-        </div>
+    <div class="layout">
+        <!-- Panneau gauche : aide-mémoire des commandes reconnues -->
+        <aside class="side-panel commands-panel" aria-label="Commandes disponibles">
+            <h2 class="side-title">Commandes</h2>
 
-        <h1 class="glitch" data-text="ASSISTANT PRODUITS">
-            ASSISTANT PRODUITS
-        </h1>
+            <p class="side-hint">
+                Cliquez une commande pour la placer dans l'assistant,
+                puis remplacez <code>N</code> par un numéro.
+            </p>
 
-        <p class="intro">
-            Posez une question sur les produits et leur disponibilité.
-        </p>
+            <!-- Liste déroulante des commandes : même comportement que
+                 le catalogue à droite (défilement interne borné). -->
+            <div class="cmd-list">
+                <div class="cmd-group">
+                    <h3>Liste des produits</h3>
 
-        <!-- Formulaire de saisie de la question -->
-        <form id="question-form" class="question-form">
-            <label for="question" class="sr-only">
-                Votre question
-            </label>
+                    <button type="button" class="cmd-item">
+                        liste les produits
+                    </button>
 
-            <input
-                type="text"
-                id="question"
-                name="question"
-                class="question-input"
-                placeholder="> Où puis-je trouver un laptop ?"
-                autocomplete="off"
-                required
-            >
+                    <button type="button" class="cmd-item">
+                        liste les 10 premiers produits
+                    </button>
 
-            <button type="submit" id="submit-button" class="submit-button">
-                Envoyer
-            </button>
-        </form>
+                    <button type="button" class="cmd-item">
+                        liste les produits à partir de 20
+                    </button>
+                </div>
 
-        <!-- Indicateur de chargement, masqué par défaut -->
-        <p id="loading" class="loading" hidden>
-            // ANALYSE EN COURS<span class="loading-dots"></span>
-        </p>
+                <div class="cmd-group">
+                    <h3>Détails d'un produit</h3>
 
-        <!-- Zone d'affichage de la réponse, remplie par le script -->
-        <section
-            id="answer"
-            class="answer"
-            aria-live="polite"
-            hidden
-        ></section>
+                    <button type="button" class="cmd-item">
+                        détails du produit N
+                    </button>
+                </div>
 
-        <!-- Zone d'affichage des erreurs, remplie par le script -->
-        <p
-            id="error"
-            class="error"
-            role="alert"
-            hidden
-        ></p>
-    </main>
+                <div class="cmd-group">
+                    <h3>Stock d'un produit</h3>
+
+                    <button type="button" class="cmd-item">
+                        stock du produit N
+                    </button>
+
+                    <button type="button" class="cmd-item">
+                        où trouver le produit N
+                    </button>
+                </div>
+
+                <div class="cmd-group">
+                    <h3>Stock d'une branche</h3>
+
+                    <button type="button" class="cmd-item">
+                        stock de la branche N
+                    </button>
+                </div>
+
+                <div class="cmd-group">
+                    <h3>Liste d'achats</h3>
+
+                    <button type="button" class="cmd-item">
+                        liste d'achats : produit N x2, produit N x1
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Panneau central : l'assistant IA -->
+        <main class="app">
+            <!-- Barre d'état décorative en haut du panneau -->
+            <div class="statusbar" aria-hidden="true">
+                <span class="statusbar-dot"></span>
+                <span>SYSTEM ONLINE</span>
+                <span class="statusbar-tag">HBNTORY // C-29</span>
+            </div>
+
+            <h1 class="glitch" data-text="ASSISTANT PRODUITS">
+                ASSISTANT PRODUITS
+            </h1>
+
+            <p class="intro">
+                Posez une question sur les produits et leur disponibilité.
+            </p>
+
+            <!-- Formulaire de saisie de la question -->
+            <form id="question-form" class="question-form">
+                <label for="question" class="sr-only">
+                    Votre question
+                </label>
+
+                <input
+                    type="text"
+                    id="question"
+                    name="question"
+                    class="question-input"
+                    placeholder="> stock du produit 12"
+                    autocomplete="off"
+                    required
+                >
+
+                <button type="submit" id="submit-button" class="submit-button">
+                    Envoyer
+                </button>
+            </form>
+
+            <!-- Indicateur de chargement, masqué par défaut -->
+            <p id="loading" class="loading" hidden>
+                // ANALYSE EN COURS<span class="loading-dots"></span>
+            </p>
+
+            <!-- Zone d'affichage de la réponse, remplie par le script -->
+            <section
+                id="answer"
+                class="answer"
+                aria-live="polite"
+                hidden
+            ></section>
+
+            <!-- Zone d'affichage des erreurs, remplie par le script -->
+            <p
+                id="error"
+                class="error"
+                role="alert"
+                hidden
+            ></p>
+        </main>
+
+        <!-- Panneau droit : catalogue des produits et de leur identifiant -->
+        <aside class="side-panel catalog-panel" aria-label="Catalogue des produits">
+            <h2 class="side-title">Produits</h2>
+
+            <p id="catalog-status" class="side-hint">
+                Chargement du catalogue&hellip;
+            </p>
+
+            <ul id="catalog-list" class="catalog-list" hidden></ul>
+        </aside>
+    </div>
 
     <script src="background.js"></script>
     <script src="script.js"></script>

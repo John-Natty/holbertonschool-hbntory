@@ -10,9 +10,16 @@
     <title>
         {% block title %}HBntory{% endblock %}
     </title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='style.css') }}"
+    >
 </head>
 
 <body>
+    <canvas id="matrix" aria-hidden="true"></canvas>
+
     <header>
         <h1>HBntory</h1>
 
@@ -69,5 +76,9 @@
 
         {% block content %}{% endblock %}
     </main>
+
+    <script
+        src="{{ url_for('static', filename='background.js') }}"
+    ></script>
 </body>
 </html>
