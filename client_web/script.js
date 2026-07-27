@@ -58,11 +58,27 @@ function capitalize(text) {
 }
 
 
+// Joint une liste de noms à la française : « A », « A et B »,
+// « A, B et C ». Fonctionne pour n'importe quel nombre de branches.
+function joinFrenchList(names) {
+    if (names.length === 1) {
+        return names[0];
+    }
+
+    const last = names[names.length - 1];
+    const others = names.slice(0, -1);
+
+    return others.join(", ") + " et " + last;
+}
+
+
 // Met en forme la réponse :
 // - détail d'un produit : retire les guillemets françaises autour du
 //   nom et le met en gras ;
 // - stock disponible dans une seule branche : nomme cette branche au
 //   lieu de se contenter de « 1 branche » ;
+// - stock disponible dans plusieurs branches : liste leurs villes au
+//   lieu de se contenter d'un nombre ;
 // - liste d'achats satisfaite par une seule branche : idem.
 function formatAnswerHtml(data) {
     const escaped = escapeHtml(data.answer);
@@ -77,6 +93,17 @@ function formatAnswerHtml(data) {
         return (
             "Le produit " + data.data.product_id + " est disponible dans "
             + describeBranch(branchName) + "."
+        );
+    }
+
+    if (data.type === "stock_by_product" && data.data.branches.length > 1) {
+        const names = data.data.branches.map(
+            (branch) => escapeHtml(branch.branch_name)
+        );
+
+        return (
+            "Le produit " + data.data.product_id + " est disponible à "
+            + joinFrenchList(names) + "."
         );
     }
 
