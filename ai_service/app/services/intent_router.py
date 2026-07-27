@@ -29,7 +29,7 @@ _INVALID_SHOPPING_LIST_REASON = (
 
 _LIST_PATTERNS = (
     re.compile(
-        r"(?:liste|affiche|montre moi) les produits"
+        r"(?:liste|affiche|montre moi) (?:les|des) produits"
     ),
     re.compile(r"quels sont les produits"),
     re.compile(
@@ -37,7 +37,7 @@ _LIST_PATTERNS = (
         r"(?P<limit>-?\d+) premiers produits"
     ),
     re.compile(
-        r"(?:liste|affiche|montre moi) les produits "
+        r"(?:liste|affiche|montre moi) (?:les|des) produits "
         r"a partir de (?P<offset>-?\d+)"
     ),
 )

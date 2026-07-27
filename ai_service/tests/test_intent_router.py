@@ -70,6 +70,30 @@ INTENT_ADAPTER = TypeAdapter(QueryIntent)
             },
         ),
         (
+            "liste des produits",
+            {
+                "type": "product_list",
+                "limit": 20,
+                "offset": 0,
+            },
+        ),
+        (
+            "affiche des produits",
+            {
+                "type": "product_list",
+                "limit": 20,
+                "offset": 0,
+            },
+        ),
+        (
+            "liste des produits à partir de 20",
+            {
+                "type": "product_list",
+                "limit": 20,
+                "offset": 20,
+            },
+        ),
+        (
             "détails du produit 12",
             {
                 "type": "product_details",
