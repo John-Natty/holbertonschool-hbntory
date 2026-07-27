@@ -1,4 +1,4 @@
-"""Contrats publics de la route POST /query."""
+"""Contrats publics de la route POST /api/query."""
 
 from typing import Annotated, Literal
 

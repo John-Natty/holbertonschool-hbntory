@@ -10,7 +10,7 @@ active est partagée pendant le lifespan FastAPI et vérifie les cinq outils
 attendus. Si elle est perdue, elle est fermée puis remplacée par une
 reconnexion bornée et synchronisée.
 
-`POST /query` utilise une orchestration déterministe. Le mode par défaut
+`POST /api/query` utilise une orchestration déterministe. Le mode par défaut
 applique uniquement les règles locales. Un mode Ollama optionnel peut proposer
 une intention structurée comme seconde chance lorsqu'elles ne comprennent pas
 la question.
@@ -26,7 +26,7 @@ Routes disponibles :
 
 - `GET /health` : état du processus HTTP ;
 - `GET /ready` : disponibilité de la session MCP, avec `200` ou `503` ;
-- `POST /query` : validation et traitement injectable d'une question.
+- `POST /api/query` : validation et traitement injectable d'une question.
 
 ## Questions reconnues
 
@@ -59,7 +59,7 @@ Une question incomplète, telle que `stock de la branche`, ou une demande
 contenant plusieurs actions retourne une clarification de type `text` sans
 appel MCP.
 
-## Codes HTTP de POST /query
+## Codes HTTP de POST /api/query
 
 - `200` : résultat MCP validé ou clarification sans donnée métier ;
 - `404` : produit ou branche absent ;
@@ -89,6 +89,7 @@ Valeurs par défaut :
 ```text
 AI_SERVICE_HOST=0.0.0.0
 AI_SERVICE_PORT=8001
+CORS_ALLOWED_ORIGINS=http://localhost:8080
 MCP_SERVER_URL=http://product-mcp-server:8000/mcp
 MCP_REQUEST_TIMEOUT_SECONDS=10
 MCP_MAX_CONCURRENT_CALLS=10
@@ -101,12 +102,18 @@ OLLAMA_MODEL=gemma3:latest
 OLLAMA_REQUEST_TIMEOUT_SECONDS=30
 ```
 
+`CORS_ALLOWED_ORIGINS` contient une ou plusieurs origines HTTP explicites,
+séparées par des virgules. Les espaces sont supprimés et une liste vide est
+refusée. Par défaut, seul le client web de développement servi depuis
+`http://localhost:8080` est autorisé. La politique accepte `GET`, `POST` et
+`OPTIONS`, ainsi que l'en-tête `Content-Type`, sans credentials navigateur.
+
 La connexion Streamable HTTP est créée au démarrage du lifespan, jamais au
 simple chargement d'un module. Si MCP est indisponible, `/health` reste
-accessible, `/ready` retourne `503` et `/query` retourne une erreur structurée
-`503`. Le processus FastAPI reste démarré.
+accessible, `/ready` retourne `503` et `/api/query` retourne une erreur
+structurée `503`. Le processus FastAPI reste démarré.
 
-Lorsqu'une session est absente, `/ready` et `/query` peuvent déclencher une
+Lorsqu'une session est absente, `/ready` et `/api/query` peuvent déclencher une
 reconnexion protégée par un verrou. Trois tentatives sont effectuées par
 défaut avec un backoff initial de 0,25 seconde, plafonné à 2 secondes. Une
 seule session est créée même si plusieurs requêtes demandent simultanément
@@ -174,7 +181,7 @@ curl --fail http://localhost:8001/ready
 curl --fail \
   --header "Content-Type: application/json" \
   --data '{"question":"liste les produits"}' \
-  http://localhost:8001/query
+  http://localhost:8001/api/query
 ```
 
 Les logs et l'arrêt propre s'obtiennent avec :
@@ -213,7 +220,7 @@ AI_INTENT_PROVIDER=ollama \
   docker compose up -d --force-recreate ai-service
 ```
 
-Si Ollama est absent, trop lent ou retourne une sortie invalide, `/query`
+Si Ollama est absent, trop lent ou retourne une sortie invalide, `/api/query`
 conserve la clarification déterministe. `/health` et `/ready` ne dépendent pas
 de sa disponibilité.
 
@@ -232,7 +239,7 @@ Il contacte uniquement le serveur MCP pour les données métier. Ollama reçoit
 seulement la question à classifier, jamais une réponse MCP, un produit ou un
 stock.
 
-Les erreurs de validation de `POST /query`, y compris un JSON malformé,
+Les erreurs de validation de `POST /api/query`, y compris un JSON malformé,
 retournent HTTP `422` avec les cinq champs publics `success`, `answer`, `type`,
 `data` et `error`. Aucun détail Pydantic ou contenu brut invalide n'est
 exposé.

@@ -3,6 +3,7 @@
 from functools import lru_cache
 import math
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import (
     AnyHttpUrl,
@@ -11,7 +12,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 NonEmptyString = Annotated[
@@ -43,6 +44,8 @@ PositiveInt = Annotated[
     Field(gt=0),
 ]
 
+CorsOriginList = Annotated[list[str], NoDecode]
+
 
 class Settings(BaseSettings):
     """Regroupe les paramètres nécessaires au service IA."""
@@ -55,6 +58,9 @@ class Settings(BaseSettings):
 
     ai_service_host: NonEmptyString = "0.0.0.0"
     ai_service_port: ServicePort = 8001
+    cors_allowed_origins: CorsOriginList = [
+        "http://localhost:8080",
+    ]
     mcp_server_url: AnyHttpUrl = (
         "http://product-mcp-server:8000/mcp"
     )
@@ -67,6 +73,84 @@ class Settings(BaseSettings):
     ollama_base_url: AnyHttpUrl = "http://ollama:11434"
     ollama_model: NonEmptyString = "gemma3:latest"
     ollama_request_timeout_seconds: PositiveFiniteFloat = 30.0
+
+    @field_validator("cors_allowed_origins", mode="before")
+    @classmethod
+    def validate_cors_allowed_origins(
+        cls,
+        value: object,
+    ) -> list[str]:
+        """Normalise et valide une liste non vide d'origines HTTP."""
+
+        if isinstance(value, str):
+            raw_origins: object = value.split(",")
+        else:
+            raw_origins = value
+
+        if not isinstance(raw_origins, (list, tuple)):
+            raise ValueError(
+                "Les origines CORS doivent former une liste."
+            )
+
+        origins: list[str] = []
+
+        for raw_origin in raw_origins:
+            if not isinstance(raw_origin, str):
+                raise ValueError(
+                    "Chaque origine CORS doit être une chaîne."
+                )
+
+            origin = raw_origin.strip()
+
+            if not origin:
+                raise ValueError(
+                    "La liste des origines CORS ne peut pas être vide."
+                )
+
+            parsed = urlsplit(origin)
+
+            try:
+                port = parsed.port
+            except ValueError as error:
+                raise ValueError(
+                    "Chaque origine CORS doit avoir un port valide."
+                ) from error
+
+            if (
+                parsed.scheme.lower() not in {"http", "https"}
+                or parsed.hostname is None
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path not in {"", "/"}
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError(
+                    "Chaque origine CORS doit être une origine HTTP "
+                    "sans chemin, identifiants, requête ni fragment."
+                )
+
+            hostname = parsed.hostname.lower()
+
+            if ":" in hostname:
+                hostname = f"[{hostname}]"
+
+            normalized_origin = (
+                f"{parsed.scheme.lower()}://{hostname}"
+            )
+
+            if port is not None:
+                normalized_origin += f":{port}"
+
+            if normalized_origin not in origins:
+                origins.append(normalized_origin)
+
+        if not origins:
+            raise ValueError(
+                "La liste des origines CORS ne peut pas être vide."
+            )
+
+        return origins
 
     @field_validator(
         "mcp_request_timeout_seconds",

@@ -36,8 +36,10 @@ docker compose up -d
 docker compose ps
 ```
 
-Le service IA est ensuite accessible sur `http://localhost:8001`. Ollama est
-facultatif et possède un profil séparé :
+Le service IA est ensuite accessible sur `http://localhost:8001` et sa route
+publique de question est `POST /api/query`. Le client web de développement
+est servi depuis `http://localhost:8080`, origine autorisée par défaut via
+`CORS_ALLOWED_ORIGINS`. Ollama est facultatif et possède un profil séparé :
 
 ```bash
 docker compose --profile ollama up -d ollama

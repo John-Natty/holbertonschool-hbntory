@@ -161,13 +161,13 @@ async def test_two_queries_share_one_http_client() -> None:
             base_url="http://testserver",
         ) as client:
             first_response = await client.post(
-                "/query",
+                "/api/query",
                 json={
                     "question": "question naturelle inconnue",
                 },
             )
             second_response = await client.post(
-                "/query",
+                "/api/query",
                 json={
                     "question": "autre formulation inconnue",
                 },

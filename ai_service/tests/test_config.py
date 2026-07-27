@@ -9,6 +9,7 @@ from app.config import Settings
 CONFIGURATION_VARIABLES = {
     "AI_SERVICE_HOST",
     "AI_SERVICE_PORT",
+    "CORS_ALLOWED_ORIGINS",
     "MCP_SERVER_URL",
     "MCP_REQUEST_TIMEOUT_SECONDS",
     "MCP_MAX_CONCURRENT_CALLS",
@@ -41,6 +42,9 @@ def test_settings_use_docker_compose_defaults(monkeypatch):
 
     assert settings.ai_service_host == "0.0.0.0"
     assert settings.ai_service_port == 8001
+    assert settings.cors_allowed_origins == [
+        "http://localhost:8080",
+    ]
     assert str(settings.mcp_server_url) == (
         "http://product-mcp-server:8000/mcp"
     )
@@ -63,6 +67,13 @@ def test_settings_read_environment(monkeypatch):
     clear_configuration_environment(monkeypatch)
     monkeypatch.setenv("AI_SERVICE_HOST", "127.0.0.1")
     monkeypatch.setenv("AI_SERVICE_PORT", "9001")
+    monkeypatch.setenv(
+        "CORS_ALLOWED_ORIGINS",
+        (
+            " http://localhost:8080, "
+            "https://client.example:8443/ "
+        ),
+    )
     monkeypatch.setenv(
         "MCP_SERVER_URL",
         "http://mcp.test:8100/mcp",
@@ -99,6 +110,10 @@ def test_settings_read_environment(monkeypatch):
 
     assert settings.ai_service_host == "127.0.0.1"
     assert settings.ai_service_port == 9001
+    assert settings.cors_allowed_origins == [
+        "http://localhost:8080",
+        "https://client.example:8443",
+    ]
     assert str(settings.mcp_server_url) == (
         "http://mcp.test:8100/mcp"
     )
@@ -130,6 +145,13 @@ def test_settings_reject_extra_field(monkeypatch):
         ("ai_service_host", "   "),
         ("ai_service_port", 0),
         ("ai_service_port", 65536),
+        ("cors_allowed_origins", ""),
+        ("cors_allowed_origins", " , "),
+        ("cors_allowed_origins", "http://localhost:8080, "),
+        ("cors_allowed_origins", "*"),
+        ("cors_allowed_origins", "ftp://localhost:8080"),
+        ("cors_allowed_origins", "http://localhost:8080/path"),
+        ("cors_allowed_origins", []),
         ("mcp_server_url", "ftp://mcp.test/mcp"),
         ("mcp_request_timeout_seconds", 0),
         ("mcp_request_timeout_seconds", -1),

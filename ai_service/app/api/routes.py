@@ -62,7 +62,7 @@ async def ready(
 
 
 @router.post(
-    "/query",
+    "/api/query",
     response_model=QueryResponse,
     responses={
         status.HTTP_404_NOT_FOUND: {
@@ -96,7 +96,7 @@ async def query(
         result = await service.handle(request)
     except Exception:
         logger.error(
-            "Une erreur inattendue a interrompu POST /query."
+            "Une erreur inattendue a interrompu POST /api/query."
         )
         result = _answer_builder.error(
             "internal_error"

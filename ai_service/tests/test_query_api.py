@@ -67,7 +67,7 @@ async def test_query_returns_structured_unavailable_error(
     """Signale temporairement que le client MCP est absent."""
 
     response = await client.post(
-        "/query",
+        "/api/query",
         json={
             "question": "Où trouver le produit 12 ?",
         },
@@ -119,7 +119,7 @@ async def test_query_returns_structured_422(
     """Retourne le même contrat public pour toute entrée invalide."""
 
     response = await client.post(
-        "/query",
+        "/api/query",
         json=payload,
     )
 
@@ -144,7 +144,7 @@ async def test_query_returns_structured_422_for_malformed_json(
     """Masque également les détails du parseur JSON."""
 
     response = await client.post(
-        "/query",
+        "/api/query",
         content='{"question":',
         headers={
             "Content-Type": "application/json",
@@ -173,7 +173,7 @@ async def test_injected_service_returns_success(
     ] = get_fake_service
 
     response = await client.post(
-        "/query",
+        "/api/query",
         json={
             "question": "  Question valide  ",
         },
@@ -207,8 +207,9 @@ async def test_openapi_exposes_health_ready_and_query(
 
     assert "get" in paths["/health"]
     assert "get" in paths["/ready"]
-    assert "post" in paths["/query"]
-    assert paths["/query"]["post"]["responses"]["422"] == {
+    assert "post" in paths["/api/query"]
+    assert "/query" not in paths
+    assert paths["/api/query"]["post"]["responses"]["422"] == {
         "description": "Unprocessable Entity",
         "content": {
             "application/json": {
@@ -218,3 +219,18 @@ async def test_openapi_exposes_health_ready_and_query(
             }
         },
     }
+
+
+async def test_legacy_query_route_returns_404(
+    client: AsyncClient,
+) -> None:
+    """N'expose plus l'ancien chemin public sans préfixe."""
+
+    response = await client.post(
+        "/query",
+        json={
+            "question": "Où trouver le produit 12 ?",
+        },
+    )
+
+    assert response.status_code == 404

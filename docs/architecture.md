@@ -267,7 +267,7 @@ Le service doit répondre au minimum aux questions suivantes :
 Lorsque les outils ne fournissent pas suffisamment d’informations,
 le service doit le signaler clairement.
 
-Chaque requête `POST /query` effectue au maximum un appel MCP métier.
+Chaque requête `POST /api/query` effectue au maximum un appel MCP métier.
 `GET /health` décrit uniquement le processus HTTP. `GET /ready` vérifie la
 session MCP et déclenche une reconnexion bornée lorsque celle-ci a été perdue.
 Le service IA démarre en mode dégradé si MCP est absent et récupère après son
@@ -289,6 +289,8 @@ Il contient :
 - une gestion simple des erreurs.
 
 Il communique avec le service AI Query par REST.
+En développement, son origine `http://localhost:8080` est explicitement
+autorisée par la politique CORS du service IA.
 
 Chaque question est indépendante et aucun historique de conversation
 n’est conservé dans le MVP.
@@ -312,7 +314,7 @@ flowchart TB
     ProductAPI[API Produit externe]
 
     PublicUser --> Client
-    Client -->|POST /query| AIService
+    Client -->|POST /api/query| AIService
     AIService -->|Au plus un appel MCP métier| MCP
 
     MCP -->|Outils produits| ProductAPI
@@ -413,7 +415,7 @@ Dans quelle branche le produit 12 est-il disponible ?
 Parcours :
 
 ```text
-1. Le client web envoie la question avec `POST /query`.
+1. Le client web envoie la question avec `POST /api/query`.
 2. Le service IA identifie le produit demandé.
 3. L’orchestrateur appelle uniquement `get_stock_by_product`.
 4. Le MCP interroge l’API interne du Backoffice.
@@ -435,7 +437,7 @@ sequenceDiagram
     participant DB as PostgreSQL
 
     User->>Client: Pose une question
-    Client->>AI: POST /query
+    Client->>AI: POST /api/query
     AI->>MCP: get_stock_by_product
     MCP->>Backoffice: Requête de stock
     Backoffice->>DB: Requête SQLAlchemy

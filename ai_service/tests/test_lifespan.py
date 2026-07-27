@@ -249,7 +249,7 @@ async def test_real_streamable_transport_failure_keeps_http_available(
                 health_response = await client.get("/health")
                 ready_response = await client.get("/ready")
                 query_response = await client.post(
-                    "/query",
+                    "/api/query",
                     json={
                         "question": "liste les produits",
                     },
@@ -311,7 +311,7 @@ async def test_query_returns_503_when_shared_client_is_not_ready() -> None:
             base_url="http://testserver",
         ) as client:
             response = await client.post(
-                "/query",
+                "/api/query",
                 json={
                     "question": "Où trouver le produit 12 ?",
                 },

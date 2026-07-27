@@ -4,6 +4,7 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.routes import router
@@ -62,6 +63,13 @@ def create_app(
             mcp_client_factory,
             ollama_http_client_factory,
         ),
+    )
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=resolved_settings.cors_allowed_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type"],
     )
     application.include_router(router)
     application.add_exception_handler(

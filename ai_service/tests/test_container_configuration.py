@@ -96,6 +96,11 @@ def test_compose_ai_service_uses_only_internal_mcp_and_ollama_urls() -> None:
     assert "AI_SERVICE_HOST: 0.0.0.0" in service
     assert "AI_SERVICE_PORT: 8001" in service
     assert (
+        "CORS_ALLOWED_ORIGINS: "
+        "${CORS_ALLOWED_ORIGINS:-http://localhost:8080}"
+        in service
+    )
+    assert (
         "MCP_SERVER_URL: http://product-mcp-server:8000/mcp"
         in service
     )

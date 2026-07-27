@@ -1,4 +1,4 @@
-"""Tests ASGI de POST /query relié à l'orchestrateur MCP."""
+"""Tests ASGI de POST /api/query relié à l'orchestrateur MCP."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -403,7 +403,7 @@ async def test_query_routes_each_intent_to_one_mcp_method(
         client,
     ):
         response = await client.post(
-            "/query",
+            "/api/query",
             json={
                 "question": question,
             },
@@ -435,7 +435,7 @@ async def test_query_returns_clarification_without_mcp_call() -> None:
         client,
     ):
         response = await client.post(
-            "/query",
+            "/api/query",
             json={
                 "question": "je cherche un produit",
             },
@@ -471,7 +471,7 @@ async def test_query_returns_503_when_mcp_connection_failed() -> None:
         client,
     ):
         response = await client.post(
-            "/query",
+            "/api/query",
             json={
                 "question": "détails du produit 12",
             },
@@ -509,7 +509,7 @@ async def test_query_reconnects_before_single_business_call() -> None:
     ):
         mcp_client.connect_error = None
         response = await client.post(
-            "/query",
+            "/api/query",
             json={
                 "question": "détails du produit 12",
             },
@@ -581,7 +581,7 @@ async def test_query_maps_expected_errors_to_http(
         client,
     ):
         response = await client.post(
-            "/query",
+            "/api/query",
             json={
                 "question": "détails du produit 12",
             },
@@ -618,7 +618,7 @@ async def test_query_returns_generic_500_for_unexpected_bug(
         client,
     ):
         response = await client.post(
-            "/query",
+            "/api/query",
             json={
                 "question": "détails du produit 12",
             },
