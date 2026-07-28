@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 """Outils MCP permettant de consulter les stocks du Backoffice."""
 
+import asyncio
 from typing import Any
 
+from pydantic import ValidationError
+
 from clients.backoffice_api import BackofficeAPIClient
-from clients.errors import MCPClientError
+from clients.errors import (
+    InvalidClientParameterError,
+    MCPClientError,
+)
+from clients.product_api import ProductAPIClient
+from schemas import BranchReferenceInput
 from tools.responses import error_response, success_response
 
 
@@ -28,13 +36,45 @@ async def get_stock_by_product_tool(
 
 
 async def get_stock_by_branch_tool(
-    client: BackofficeAPIClient,
-    branch_id: int,
+    backoffice_client: BackofficeAPIClient,
+    product_client: ProductAPIClient,
+    branch_id: int | None = None,
+    branch_name: str | None = None,
 ) -> dict[str, Any]:
-    """Retourne les produits disponibles dans une branche."""
+    """Retourne le stock enrichi avec les noms officiels Produit."""
 
     try:
-        result = await client.get_stock_by_branch(branch_id)
+        try:
+            reference = BranchReferenceInput(
+                branch_id=branch_id,
+                branch_name=branch_name,
+            )
+        except ValidationError as error:
+            raise InvalidClientParameterError(
+                "Fournissez soit branch_id, soit branch_name."
+            ) from error
+
+        if (
+            reference.branch_id is not None
+            and reference.branch_name is not None
+        ):
+            result = await backoffice_client.get_stock_by_branch(
+                branch_id=reference.branch_id,
+                branch_name=reference.branch_name,
+            )
+        elif reference.branch_name is None:
+            result = await backoffice_client.get_stock_by_branch(
+                reference.branch_id
+            )
+        else:
+            result = await backoffice_client.get_stock_by_branch(
+                branch_name=reference.branch_name
+            )
+
+        enriched_stocks = await _enrich_stocks_with_product_details(
+            product_client,
+            result["stocks"],
+        )
 
     except MCPClientError as error:
         # Empêche l'exposition d'une traceback technique à l'agent.
@@ -42,8 +82,39 @@ async def get_stock_by_branch_tool(
 
     return success_response(
         branch=result["branch"],
-        stocks=result["stocks"],
+        stocks=enriched_stocks,
     )
+
+
+async def _enrich_stocks_with_product_details(
+    product_client: ProductAPIClient,
+    stocks: list[dict[str, int]],
+) -> list[dict[str, Any]]:
+    """Associe chaque quantité au nom et au prix officiels du produit."""
+
+    products = await asyncio.gather(
+        *(
+            product_client.get_product_details(
+                stock["product_id"]
+            )
+            for stock in stocks
+        )
+    )
+
+    return [
+        {
+            "product_id": stock["product_id"],
+            "product_name": product["name"],
+            "unit_price": product["unit_price"],
+            "currency": product["currency"],
+            "quantity": stock["quantity"],
+        }
+        for stock, product in zip(
+            stocks,
+            products,
+            strict=True,
+        )
+    ]
 
 
 async def check_shopping_list_tool(

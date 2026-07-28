@@ -59,6 +59,16 @@ NonEmptyString = Annotated[
     ),
 ]
 
+BranchName = Annotated[
+    str,
+    Field(strict=True),
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=100,
+    ),
+]
+
 
 def _require_datetime_string(value: Any) -> Any:
     """Refuse la conversion implicite d'un nombre en date."""
@@ -130,9 +140,12 @@ class BranchData(StrictModel):
 
 
 class StockData(StrictModel):
-    """Décrit une quantité locale associée à un produit."""
+    """Décrit un produit tarifé et sa quantité dans une branche."""
 
     product_id: StrictPositiveInt
+    product_name: NonEmptyString
+    unit_price: NonNegativeFiniteFloat
+    currency: NonEmptyString
     quantity: StrictNonNegativeInt
 
 

@@ -33,6 +33,12 @@ on la termine avant toute autre chose. La **partie 2** liste ce qui est
 - Indiquer les branches possédant un produit.
 - Lister les produits disponibles dans une branche.
 - Indiquer quelle branche peut satisfaire une liste d'achats.
+- Choisir un seul fournisseur au démarrage : MiniMax direct, MiniMax-M3 via
+  NVIDIA ou Ollama local, avec fallback déterministe.
+- Rédiger une réponse naturelle ancrée, avec fallback déterministe.
+- Conserver une conversation courte en RAM avec identifiant opaque, TTL et
+  limites de capacité.
+- Conserver un maximum d'un appel MCP métier et aucun tool calling IA.
 
 ### Client public
 
@@ -49,7 +55,7 @@ que si le scope obligatoire est **entièrement terminé** :
 
 - Historique de stock.
 - Journaux d'audit (audit logs).
-- Mémoire de conversation.
+- Mémoire de conversation persistante ou partagée entre plusieurs instances.
 - Streaming SSE / WebSocket.
 - Documentation OpenAPI.
 - Rate limiting.

@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -10,8 +11,9 @@ from httpx import ASGITransport, AsyncClient
 from app.config import Settings
 from app.errors import MCPConnectionError
 from app.main import create_app
-from app.services.intent_router import RuleBasedIntentRouter
-from app.services.query_service import MCPQueryService
+from app.services.conversation_store import ConversationStore
+from app.services.intent_classifier import IntentClassifier
+from app.services.orchestrator import QueryOrchestrator
 
 
 pytestmark = pytest.mark.asyncio
@@ -97,6 +99,51 @@ class FakeClientFactory:
         return self.client
 
 
+class FakeModelClient:
+    """Double du transport de complétion partagé."""
+
+    def __init__(self) -> None:
+        self.close_count = 0
+
+    async def complete(self, messages, *, max_tokens: int) -> str:
+        """N'est pas appelé par les tests de composition."""
+
+        raise AssertionError("Complétion inattendue.")
+
+    async def aclose(self) -> None:
+        """Compte la fermeture du client partagé."""
+
+        self.close_count += 1
+
+
+class FakeModelFactory:
+    """Observe le fournisseur distant construit par le lifespan."""
+
+    def __init__(self, client: FakeModelClient) -> None:
+        self.client = client
+        self.calls: list[dict[str, object]] = []
+
+    def __call__(self, **configuration: object) -> FakeModelClient:
+        self.calls.append(configuration)
+        return self.client
+
+
+class TrackingHTTPClientFactory:
+    """Crée un client Ollama local et observable sans réseau."""
+
+    def __init__(self) -> None:
+        self.clients: list[httpx.AsyncClient] = []
+
+    def __call__(self) -> httpx.AsyncClient:
+        client = httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(500)
+            )
+        )
+        self.clients.append(client)
+        return client
+
+
 def create_test_settings() -> Settings:
     """Retourne une configuration entièrement locale."""
 
@@ -104,6 +151,7 @@ def create_test_settings() -> Settings:
         mcp_server_url="http://mcp.test/mcp",
         mcp_request_timeout_seconds=3.5,
         mcp_max_concurrent_calls=4,
+        ai_model_provider="rules",
     )
 
 
@@ -138,14 +186,18 @@ async def test_lifespan_builds_connects_and_closes_once() -> None:
     async with application.router.lifespan_context(application):
         assert application.state.mcp_client is lifecycle_client
         assert isinstance(
-            application.state.query_service,
-            MCPQueryService,
+            application.state.query_orchestrator,
+            QueryOrchestrator,
         )
         assert isinstance(
-            application.state.intent_router,
-            RuleBasedIntentRouter,
+            application.state.intent_classifier,
+            IntentClassifier,
         )
-        assert application.state.intent_classifier is None
+        assert application.state.answer_generator is None
+        assert isinstance(
+            application.state.conversation_store,
+            ConversationStore,
+        )
         assert lifecycle_client.connect_count == 1
         assert lifecycle_client.close_count == 0
         assert factory.calls == [
@@ -181,6 +233,9 @@ async def test_ready_returns_200_when_mcp_is_connected() -> None:
         "status": "ready",
         "service": "ai-service",
         "mcp": "connected",
+        "provider": "rules",
+        "provider_status": "disabled",
+        "active_provider": "rules",
     }
     assert lifecycle_client.connect_count == 1
     assert lifecycle_client.ensure_count == 1
@@ -216,6 +271,9 @@ async def test_expected_connection_failure_keeps_http_available() -> None:
         "status": "not_ready",
         "service": "ai-service",
         "mcp": "disconnected",
+        "provider": "rules",
+        "provider_status": "disabled",
+        "active_provider": "rules",
     }
     assert second_ready_response.status_code == 503
     assert lifecycle_client.connect_count == 3
@@ -234,6 +292,7 @@ async def test_real_streamable_transport_failure_keeps_http_available(
             mcp_reconnect_attempts=1,
             mcp_reconnect_initial_delay_seconds=0,
             mcp_reconnect_max_delay_seconds=0,
+            ai_model_provider="rules",
         )
     )
     transport = ASGITransport(app=application)
@@ -335,6 +394,9 @@ async def test_missing_lifespan_state_returns_controlled_503(
         "status": "not_ready",
         "service": "ai-service",
         "mcp": "disconnected",
+        "provider": "hybrid",
+        "provider_status": "configured",
+        "active_provider": "ollama",
     }
 
 
@@ -389,3 +451,104 @@ async def test_expected_shutdown_error_is_controlled() -> None:
         assert lifecycle_client.is_ready is True
 
     assert lifecycle_client.close_count == 1
+
+
+@pytest.mark.parametrize(
+    ("provider", "key_field", "expected_active"),
+    [
+        ("minimax", "minimax_api_key", "minimax"),
+        ("nvidia", "nvidia_api_key", "nvidia"),
+        ("hybrid", "nvidia_api_key", "nvidia"),
+    ],
+)
+async def test_lifespan_selects_one_remote_client_and_closes_it(
+    provider: str,
+    key_field: str,
+    expected_active: str,
+) -> None:
+    """Partage un seul client entre compréhension et rédaction."""
+
+    model_client = FakeModelClient()
+    model_factory = FakeModelFactory(model_client)
+    settings_data: dict[str, object] = {
+        "ai_model_provider": provider,
+        key_field: "provider-secret-for-test",
+    }
+    application = create_app(
+        settings=Settings(**settings_data),
+        mcp_client_factory=FakeClientFactory(
+            FakeLifecycleClient()
+        ),
+        minimax_client_factory=model_factory,
+    )
+
+    async with application.router.lifespan_context(application):
+        classifier = application.state.intent_classifier
+        generator = application.state.answer_generator
+
+        assert application.state.active_ai_provider == expected_active
+        assert classifier._model_client is model_client
+        assert generator._client is model_client
+        assert len(model_factory.calls) == 1
+        assert model_client.close_count == 0
+
+    assert model_client.close_count == 1
+
+    configuration = model_factory.calls[0]
+    if expected_active == "nvidia":
+        assert configuration["token_parameter"] == "max_tokens"
+        assert configuration["additional_payload"] == {}
+        assert configuration["model"] == "minimaxai/minimax-m3"
+    else:
+        assert "token_parameter" not in configuration
+        assert "additional_payload" not in configuration
+        assert configuration["model"] == "MiniMax-M3"
+
+
+@pytest.mark.parametrize("provider", ["nvidia", "minimax"])
+async def test_missing_remote_key_selects_rules_fallback(
+    provider: str,
+) -> None:
+    """N'invente pas de clé et ne construit aucun client distant."""
+
+    model_client = FakeModelClient()
+    model_factory = FakeModelFactory(model_client)
+    application = create_app(
+        settings=Settings(ai_model_provider=provider),
+        mcp_client_factory=FakeClientFactory(
+            FakeLifecycleClient()
+        ),
+        minimax_client_factory=model_factory,
+    )
+
+    async with application.router.lifespan_context(application):
+        assert application.state.active_ai_provider == "rules"
+        assert application.state.answer_generator is None
+        assert application.state.ai_provider_status == "fallback_rules"
+
+    assert model_factory.calls == []
+    assert model_client.close_count == 0
+
+
+@pytest.mark.parametrize("provider", ["ollama", "hybrid"])
+async def test_ollama_selection_shares_and_closes_http_client(
+    provider: str,
+) -> None:
+    """Construit un seul transport local lorsqu'aucune clé NVIDIA existe."""
+
+    http_factory = TrackingHTTPClientFactory()
+    application = create_app(
+        settings=Settings(ai_model_provider=provider),
+        mcp_client_factory=FakeClientFactory(
+            FakeLifecycleClient()
+        ),
+        ollama_http_client_factory=http_factory,
+    )
+
+    async with application.router.lifespan_context(application):
+        assert application.state.active_ai_provider == "ollama"
+        assert application.state.answer_generator is not None
+        assert len(http_factory.clients) == 1
+        assert http_factory.clients[0].is_closed is False
+
+    assert http_factory.clients[0].is_closed is True

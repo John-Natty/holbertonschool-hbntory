@@ -9,6 +9,8 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    field_validator,
+    model_validator,
     StrictBool,
     StringConstraints,
 )
@@ -56,6 +58,15 @@ NonEmptyString = Annotated[
     ),
 ]
 
+BranchName = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=100,
+    ),
+]
+
 
 def _require_datetime_string(value: Any) -> Any:
     """Refuse toute conversion implicite d'un nombre en date."""
@@ -87,6 +98,34 @@ class ShoppingListItemInput(StrictSchema):
 
     product_id: StrictPositiveInt
     quantity: StrictPositiveInt
+
+
+class BranchReferenceInput(StrictSchema):
+    """Identifie une branche par exactement une référence."""
+
+    branch_id: StrictPositiveInt | None = None
+    branch_name: BranchName | None = None
+
+    @field_validator("branch_name", mode="before")
+    @classmethod
+    def normalize_branch_name(cls, value):
+        """Normalise les espaces sans altérer le nom métier."""
+
+        if isinstance(value, str):
+            return " ".join(value.split())
+
+        return value
+
+    @model_validator(mode="after")
+    def require_exactly_one_reference(self):
+        """Exige soit l'identifiant, soit le nom, jamais les deux."""
+
+        if (self.branch_id is None) == (self.branch_name is None):
+            raise ValueError(
+                "Une seule référence de branche doit être fournie."
+            )
+
+        return self
 
 
 ShoppingListItems = Annotated[
@@ -142,9 +181,12 @@ class BranchSchema(StrictSchema):
 
 
 class StockSchema(StrictSchema):
-    """Décrit une quantité locale associée à un produit."""
+    """Décrit un produit tarifé et sa quantité dans une branche."""
 
     product_id: StrictPositiveInt
+    product_name: NonEmptyString
+    unit_price: NonNegativeFiniteFloat
+    currency: NonEmptyString
     quantity: StrictNonNegativeInt
 
 

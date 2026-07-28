@@ -1,14 +1,17 @@
 """Tests ASGI des routes publiques du service IA."""
 
+import re
+
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
 
-from app.api.dependencies import get_query_service
+from app.api.dependencies import get_query_orchestrator
+from app.models.conversation import generate_conversation_id
 from app.models.query import (
     QueryRequest,
     QueryResponse,
-    TextResponse,
+    UnsupportedResponse,
 )
 
 
@@ -24,6 +27,17 @@ INVALID_REQUEST_RESPONSE = {
         "message": "La requête contient des paramètres invalides.",
     },
 }
+
+
+def without_conversation_id(body: dict) -> dict:
+    """Valide puis retire l'identifiant opaque d'une assertion statique."""
+
+    conversation_id = body.pop("conversation_id")
+    assert re.fullmatch(
+        r"[A-Za-z0-9_-]{32,64}",
+        conversation_id,
+    )
+    return body
 
 
 class SuccessfulQueryService:
@@ -42,7 +56,11 @@ class SuccessfulQueryService:
 
         self.request = request
 
-        return TextResponse(
+        return UnsupportedResponse(
+            conversation_id=(
+                request.conversation_id
+                or generate_conversation_id()
+            ),
             answer="La question a été validée.",
         )
 
@@ -74,7 +92,7 @@ async def test_query_returns_structured_unavailable_error(
     )
 
     assert response.status_code == 503
-    assert response.json() == {
+    assert without_conversation_id(response.json()) == {
         "success": False,
         "answer": (
             "Le service de données est temporairement indisponible."
@@ -83,7 +101,7 @@ async def test_query_returns_structured_unavailable_error(
         "data": None,
         "error": {
             "code": "service_unavailable",
-            "message": "Le serveur MCP n’est pas encore connecté.",
+            "message": "Le serveur MCP n’est pas connecté.",
         },
     }
 
@@ -124,8 +142,11 @@ async def test_query_returns_structured_422(
     )
 
     assert response.status_code == 422
-    assert response.json() == INVALID_REQUEST_RESPONSE
+    assert without_conversation_id(
+        response.json()
+    ) == INVALID_REQUEST_RESPONSE
     assert set(response.json()) == {
+        "conversation_id",
         "success",
         "answer",
         "type",
@@ -152,7 +173,9 @@ async def test_query_returns_structured_422_for_malformed_json(
     )
 
     assert response.status_code == 422
-    assert response.json() == INVALID_REQUEST_RESPONSE
+    assert without_conversation_id(
+        response.json()
+    ) == INVALID_REQUEST_RESPONSE
 
 
 async def test_injected_service_returns_success(
@@ -169,7 +192,7 @@ async def test_injected_service_returns_success(
         return fake_service
 
     application.dependency_overrides[
-        get_query_service
+        get_query_orchestrator
     ] = get_fake_service
 
     response = await client.post(
@@ -181,16 +204,23 @@ async def test_injected_service_returns_success(
 
     assert response.status_code == 200
     assert set(response.json()) == {
+        "conversation_id",
         "success",
         "answer",
         "type",
         "data",
         "error",
     }
+    conversation_id = response.json()["conversation_id"]
+    assert re.fullmatch(
+        r"[A-Za-z0-9_-]{32,64}",
+        conversation_id,
+    )
     assert response.json() == {
+        "conversation_id": conversation_id,
         "success": True,
         "answer": "La question a été validée.",
-        "type": "text",
+        "type": "unsupported",
         "data": None,
         "error": None,
     }
@@ -198,15 +228,16 @@ async def test_injected_service_returns_success(
     assert fake_service.request.question == "Question valide"
 
 
-async def test_openapi_exposes_health_ready_and_query(
+async def test_openapi_exposes_all_public_routes(
     application: FastAPI,
 ):
-    """Documente les trois routes prévues pour cette phase."""
+    """Documente le catalogue sans modifier les routes existantes."""
 
     paths = application.openapi()["paths"]
 
     assert "get" in paths["/health"]
     assert "get" in paths["/ready"]
+    assert "get" in paths["/api/products"]
     assert "post" in paths["/api/query"]
     assert "/query" not in paths
     assert paths["/api/query"]["post"]["responses"]["422"] == {
@@ -215,6 +246,19 @@ async def test_openapi_exposes_health_ready_and_query(
             "application/json": {
                 "schema": {
                     "$ref": "#/components/schemas/ErrorResponse",
+                }
+            }
+        },
+    }
+    assert paths["/api/products"]["get"]["responses"]["422"] == {
+        "description": "Unprocessable Entity",
+        "content": {
+            "application/json": {
+                    "schema": {
+                        "$ref": (
+                            "#/components/schemas/"
+                            "ProductCatalogErrorResponse"
+                        ),
                 }
             }
         },

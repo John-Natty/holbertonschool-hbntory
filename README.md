@@ -43,7 +43,7 @@ ses fichiers `requirements.txt` et `requirements-dev.txt` séparés.
 ## Lancement des services
 
 Le mode Compose par défaut démarre PostgreSQL, l'API Produit, le Backoffice,
-le serveur MCP, le service IA et le client web en mode déterministe `rules` :
+le serveur MCP, Ollama, le service IA hybride et le client web :
 
 ```bash
 cp .env.example .env
@@ -56,11 +56,7 @@ docker compose ps
 Le service IA est ensuite accessible sur `http://localhost:8001` et sa route
 publique de question est `POST /api/query`. Le client web de développement
 est servi depuis `http://localhost:8080`, origine autorisée par défaut via
-`CORS_ALLOWED_ORIGINS`. Ollama est facultatif et possède un profil séparé :
-
-```bash
-docker compose --profile ollama up -d ollama
-```
+`CORS_ALLOWED_ORIGINS`. Le modèle local configuré est `gemma3:latest`.
 
 ## Initialisation de la base de données
 
@@ -129,7 +125,6 @@ Les images de production installent uniquement `requirements.txt` :
 
 ```bash
 docker compose config --quiet
-docker compose --profile ollama config --quiet
 docker compose build backoffice product-mcp-server
 docker compose build
 ```
@@ -140,6 +135,7 @@ Voir les décisions acceptées dans [docs/adr/](docs/adr/).
 
 ## Limitations connues
 
-Ollama est facultatif et ne sert qu'à classifier une intention lorsque le
-profil et le mode correspondants sont activés. Le mode `rules` fonctionne sans
-Ollama.
+Le modèle Ollama doit être téléchargé une première fois avec
+`docker compose exec ollama ollama pull gemma3:latest`. Le mode `hybrid`
+continue à répondre avec les règles et `AnswerBuilder` si un fournisseur IA
+est indisponible.

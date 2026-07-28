@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, StringConstraints
 
+from app.models.conversation import ConversationId
 from app.models.data import (
     NonEmptyString,
     ProductDetailsData,
@@ -39,6 +40,7 @@ ErrorCode = Literal[
 class QueryRequest(StrictModel):
     """Décrit une question publique validée."""
 
+    conversation_id: ConversationId | None = None
     question: QuestionText
 
 
@@ -52,6 +54,7 @@ class ErrorDetail(StrictModel):
 class SuccessResponse(StrictModel):
     """Regroupe les invariants de toutes les réponses réussies."""
 
+    conversation_id: ConversationId
     success: Literal[True] = True
     answer: NonEmptyString
     error: None = None
@@ -92,16 +95,17 @@ class ShoppingListResponse(SuccessResponse):
     data: ShoppingListData
 
 
-class TextResponse(SuccessResponse):
-    """Réponse textuelle sans affirmation métier structurée."""
+class UnsupportedResponse(SuccessResponse):
+    """Refus ou clarification sans affirmation métier structurée."""
 
-    type: Literal["text"] = "text"
+    type: Literal["unsupported"] = "unsupported"
     data: None = None
 
 
 class ErrorResponse(StrictModel):
     """Réponse publique représentant un échec métier prévu."""
 
+    conversation_id: ConversationId
     success: Literal[False] = False
     answer: NonEmptyString
     type: Literal["error"] = "error"
@@ -115,7 +119,7 @@ QueryResponse = Annotated[
     | StockByProductResponse
     | StockByBranchResponse
     | ShoppingListResponse
-    | TextResponse
+    | UnsupportedResponse
     | ErrorResponse,
     Field(discriminator="type"),
 ]

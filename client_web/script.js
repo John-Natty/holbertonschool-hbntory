@@ -3,6 +3,8 @@
 // Adresse publique du service IA vue depuis le navigateur.
 // À adapter si le service IA est exposé sur une autre adresse.
 const AI_QUERY_URL = "http://localhost:8001/api/query";
+const AI_PRODUCTS_URL = "http://localhost:8001/api/products";
+const CONVERSATION_STORAGE_KEY = "hbntory-conversation-id";
 
 // Récupère les éléments manipulés par le script.
 const form = document.getElementById("question-form");
@@ -15,6 +17,16 @@ const error = document.getElementById("error");
 // Éléments du panneau catalogue (colonne de droite).
 const catalogStatus = document.getElementById("catalog-status");
 const catalogList = document.getElementById("catalog-list");
+let conversationId = null;
+
+try {
+    conversationId = sessionStorage.getItem(
+        CONVERSATION_STORAGE_KEY
+    );
+} catch (storageError) {
+    // Une politique navigateur stricte ne doit pas bloquer l'assistant.
+    conversationId = null;
+}
 
 
 // Masque la réponse et l'erreur avant chaque nouvelle recherche.
@@ -41,115 +53,13 @@ function escapeHtml(text) {
 }
 
 
-// Décrit une branche par son nom (« la branche de Toulouse »), avec
-// l'élision « d' » devant une voyelle (« la branche d'Albi »).
-// Fonctionne pour n'importe quelle branche, y compris une future.
-function describeBranch(branchName) {
-    const startsWithVowel = /^[aeiouyàâäéèêëîïôöùûü]/i.test(branchName);
-    const preposition = startsWithVowel ? "d’" : "de ";
-
-    return "la branche " + preposition + escapeHtml(branchName);
-}
-
-
-// Met en majuscule la première lettre d'une phrase.
-function capitalize(text) {
-    return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-
-// Joint une liste de noms à la française : « A », « A et B »,
-// « A, B et C ». Fonctionne pour n'importe quel nombre de branches.
-function joinFrenchList(names) {
-    if (names.length === 1) {
-        return names[0];
-    }
-
-    const last = names[names.length - 1];
-    const others = names.slice(0, -1);
-
-    return others.join(", ") + " et " + last;
-}
-
-
-// Met en forme la réponse :
-// - détail d'un produit : retire les guillemets françaises autour du
-//   nom et le met en gras ;
-// - stock disponible dans une seule branche : nomme cette branche au
-//   lieu de se contenter de « 1 branche » ;
-// - stock disponible dans plusieurs branches : liste leurs villes au
-//   lieu de se contenter d'un nombre ;
-// - liste d'achats satisfaite par une seule branche : idem.
+// Affiche le texte naturel du service après l'avoir échappé.
+// Le seul enrichissement HTML autorisé met un nom entre guillemets en gras.
 function formatAnswerHtml(data) {
     const escaped = escapeHtml(data.answer);
 
     if (data.type === "product_details") {
         return escaped.replace(/«\s*([^»]+?)\s*»/, "<strong>$1</strong>");
-    }
-
-    if (data.type === "stock_by_product" && data.data.branches.length === 1) {
-        const branchName = data.data.branches[0].branch_name;
-
-        return (
-            "Le produit " + data.data.product_id + " est disponible dans "
-            + describeBranch(branchName) + "."
-        );
-    }
-
-    if (data.type === "stock_by_product" && data.data.branches.length > 1) {
-        const names = data.data.branches.map(
-            (branch) => escapeHtml(branch.branch_name)
-        );
-
-        return (
-            "Le produit " + data.data.product_id + " est disponible à "
-            + joinFrenchList(names) + "."
-        );
-    }
-
-    if (
-        data.type === "shopping_list"
-        && data.data.matching_branches.length === 1
-    ) {
-        const branchName = data.data.matching_branches[0].branch_name;
-
-        return (
-            capitalize(describeBranch(branchName))
-            + " peut satisfaire entièrement cette liste d’achats."
-        );
-    }
-
-    if (
-        data.type === "shopping_list"
-        && data.data.matching_branches.length > 1
-    ) {
-        const names = data.data.matching_branches.map(
-            (branch) => escapeHtml(branch.branch_name)
-        );
-
-        return (
-            "Les branches " + joinFrenchList(names)
-            + " peuvent satisfaire entièrement cette liste d’achats."
-        );
-    }
-
-    if (data.type === "stock_by_branch" && data.data.stocks.length > 0) {
-        const branchName = escapeHtml(data.data.branch.name);
-        const stockItems = data.data.stocks.map(function (stock) {
-            const productId = escapeHtml(String(stock.product_id));
-            const quantity = escapeHtml(String(stock.quantity));
-            const unit = stock.quantity === 1 ? "unité" : "unités";
-
-            return (
-                "<li>Produit " + productId + " : "
-                + quantity + " " + unit + "</li>"
-            );
-        }).join("");
-
-        return (
-            "La branche <strong>" + branchName + "</strong> possède :"
-            + '<ul class="answer-list">' + stockItems + "</ul>"
-        );
     }
 
     return escaped;
@@ -173,14 +83,35 @@ function setBusy(isBusy) {
 
 // Interroge le service IA et retourne sa réponse JSON.
 async function askQuestion(question) {
+    const payload = { question: question };
+
+    if (conversationId) {
+        payload.conversation_id = conversationId;
+    }
+
     const response = await fetch(AI_QUERY_URL, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
         },
-        body: JSON.stringify({ question: question }),
+        body: JSON.stringify(payload),
     });
     const data = await response.json();
+
+    // Le serveur peut renouveler un identifiant expiré. L'onglet utilise
+    // toujours la dernière valeur opaque sans l'exposer dans l'URL.
+    if (typeof data.conversation_id === "string") {
+        conversationId = data.conversation_id;
+
+        try {
+            sessionStorage.setItem(
+                CONVERSATION_STORAGE_KEY,
+                conversationId
+            );
+        } catch (storageError) {
+            // La conversation continue en mémoire pour l'onglet courant.
+        }
+    }
 
     // Conserve uniquement le message public structuré du service IA.
     if (!response.ok) {
@@ -305,14 +236,15 @@ function buildCatalogItem(product) {
 }
 
 
-// Charge le catalogue au démarrage, via l'assistant IA lui-même,
-// et l'affiche dans le panneau de droite.
+// Charge le catalogue technique sans consommer de génération IA.
 async function loadCatalog() {
     try {
-        // Une seule requête suffit : la limite maximale du service est 100.
-        const data = await askQuestion("liste les 100 premiers produits");
+        const response = await fetch(
+            AI_PRODUCTS_URL + "?limit=100&offset=0"
+        );
+        const data = await response.json();
 
-        if (!data.success || data.type !== "product_list") {
+        if (!response.ok || !data.success) {
             catalogStatus.textContent =
                 "Catalogue indisponible pour le moment.";
             return;

@@ -8,9 +8,12 @@ from app.extensions import db
 from app.internal_api import internal_api_bp
 from app.internal_api.decorators import internal_api_key_required
 from app.internal_api.services import (
+    InternalAPIAmbiguousBranchError,
+    InternalAPIBranchNotFoundError,
     InternalAPIValidationError,
     check_shopping_list,
     get_stock_by_branch,
+    get_stock_by_branch_name,
     get_stock_by_product,
 )
 from app.services.stock_validation import StockValidationError
@@ -89,6 +92,62 @@ def stock_by_branch(branch_id):
         db.session.rollback()
         current_app.logger.exception(
             "Impossible de consulter le stock par branche."
+        )
+
+        return _error_response(
+            "internal_error",
+            "Une erreur interne empêche la consultation du stock.",
+            500,
+        )
+
+    return jsonify(
+        {
+            "success": True,
+            "branch": {
+                "id": branch.id,
+                "name": branch.name,
+            },
+            "stocks": stocks,
+            "error": None,
+        }
+    ), 200
+
+
+@internal_api_bp.get("/branches/by-name")
+@internal_api_key_required
+def stock_by_branch_name():
+    """Retourne le stock d'une branche résolue par son nom exact."""
+
+    try:
+        branch, stocks = get_stock_by_branch_name(
+            request.args.get("name")
+        )
+
+    except InternalAPIValidationError as error:
+        return _error_response(
+            "invalid_branch_name",
+            str(error),
+            400,
+        )
+
+    except InternalAPIBranchNotFoundError:
+        return _error_response(
+            "branch_not_found",
+            "La branche demandée n'existe pas.",
+            404,
+        )
+
+    except InternalAPIAmbiguousBranchError:
+        return _error_response(
+            "ambiguous_branch",
+            "Le nom demandé correspond à plusieurs branches.",
+            409,
+        )
+
+    except SQLAlchemyError:
+        db.session.rollback()
+        current_app.logger.exception(
+            "Impossible de consulter le stock par nom de branche."
         )
 
         return _error_response(

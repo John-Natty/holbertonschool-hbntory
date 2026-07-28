@@ -37,20 +37,26 @@ from app.services.orchestrator import QueryOrchestrator
 pytestmark = pytest.mark.asyncio
 
 
-def product_data() -> ProductData:
+def product_data(
+    *,
+    product_id: int = 12,
+    name: str = "Produit de test",
+    unit_price: float = 19.99,
+    currency: str = "EUR",
+) -> ProductData:
     """Construit un produit validé commun aux tests."""
 
     return ProductData(
-        id=12,
+        id=product_id,
         sku="HB-TEST-0012",
-        name="Produit de test",
+        name=name,
         description="Description.",
         category="Tests",
         brand="HBntory",
         supplier_id="SUP-001",
         supplier_name="Fournisseur",
-        unit_price=19.99,
-        currency="EUR",
+        unit_price=unit_price,
+        currency=currency,
         discontinued=False,
         weight_kg=1.25,
         tags=["test"],
@@ -111,6 +117,9 @@ class FakeMCPDataClient:
             stocks=[
                 {
                     "product_id": 12,
+                    "product_name": "Produit de test",
+                    "unit_price": 49.99,
+                    "currency": "EUR",
                     "quantity": 8,
                 }
             ],
@@ -203,7 +212,8 @@ class FakeMCPDataClient:
 
     async def get_stock_by_branch(
         self,
-        branch_id: int,
+        branch_id: int | None = None,
+        branch_name: str | None = None,
     ) -> StockByBranchData:
         """Enregistre l'appel de stock Branche."""
 
@@ -212,6 +222,11 @@ class FakeMCPDataClient:
                 "get_stock_by_branch",
                 {
                     "branch_id": branch_id,
+                    **(
+                        {"branch_name": branch_name}
+                        if branch_name is not None
+                        else {}
+                    ),
                 },
             )
         )
@@ -237,6 +252,25 @@ class FakeMCPDataClient:
         )
         self._raise_error()
         return self.shopping
+
+
+class FakeAnswerGenerator:
+    """Simule une rédaction naturelle et mémorise ses appels."""
+
+    def __init__(self) -> None:
+        """Prépare la liste des appels."""
+
+        self.calls: list[tuple[str, object]] = []
+
+    async def generate(
+        self,
+        question: str,
+        response: object,
+    ) -> str:
+        """Retourne une formulation de test."""
+
+        self.calls.append((question, response))
+        return "Réponse naturelle de test."
 
 
 @pytest.mark.parametrize(
@@ -351,6 +385,236 @@ async def test_answer_builder_uses_only_validated_product_data() -> None:
     assert response.data is client.details
 
 
+async def test_product_list_answer_displays_each_validated_product() -> None:
+    """Affiche identifiants, noms et prix avec un unique appel MCP."""
+
+    router = FakeIntentRouter(ProductListIntent(limit=10))
+    client = FakeMCPDataClient()
+    client.products = ProductListData(
+        count=2,
+        limit=10,
+        offset=0,
+        products=[
+            product_data(
+                product_id=4,
+                name="Écran compact",
+                unit_price=169.99,
+                currency="USD",
+            ),
+            product_data(
+                product_id=3,
+                name="Écran laboratoire",
+                unit_price=229.5,
+                currency="USD",
+            ),
+        ],
+    )
+    orchestrator = QueryOrchestrator(
+        router,
+        client,
+        AnswerBuilder(),
+    )
+
+    response = await orchestrator.handle(
+        "liste les 10 premiers produits"
+    )
+
+    assert response.answer == (
+        "2 produits ont été trouvés :\n\n"
+        "- #4 — Écran compact — 169,99 USD\n"
+        "- #3 — Écran laboratoire — 229,50 USD"
+    )
+    assert response.data is client.products
+    assert client.calls == [
+        (
+            "list_products",
+            {
+                "limit": 10,
+                "offset": 0,
+            },
+        )
+    ]
+
+
+async def test_product_list_answer_displays_one_product() -> None:
+    """Présente également les données lorsqu'un seul produit existe."""
+
+    data = ProductListData(
+        count=1,
+        limit=1,
+        offset=0,
+        products=[
+            product_data(
+                product_id=8,
+                name="Clavier",
+                unit_price=49.9,
+            )
+        ],
+    )
+
+    response = AnswerBuilder().product_list(data)
+
+    assert response.answer == (
+        "1 produit a été trouvé :\n\n"
+        "- #8 — Clavier — 49,90 EUR"
+    )
+    assert response.data is data
+
+
+async def test_product_list_answer_respects_response_limit() -> None:
+    """N'affiche jamais plus de lignes que la limite validée."""
+
+    products = [
+        product_data(
+            product_id=index,
+            name=f"Produit {index}",
+        )
+        for index in range(1, 11)
+    ]
+    data = ProductListData(
+        count=10,
+        limit=5,
+        offset=0,
+        products=products,
+    )
+
+    response = AnswerBuilder().product_list(data)
+
+    assert response.answer.startswith(
+        "Voici 5 produits affichés sur 10 au total :"
+    )
+    assert response.answer.count("\n- #") == 5
+    assert "- #5 — Produit 5" in response.answer
+    assert "- #6 — Produit 6" not in response.answer
+    assert response.data.products == products
+
+
+async def test_product_list_answer_distinguishes_page_from_total() -> None:
+    """Distingue le nombre affiché du total annoncé par le catalogue."""
+
+    data = ProductListData(
+        count=39,
+        limit=20,
+        offset=0,
+        products=[
+            product_data(
+                product_id=index,
+                name=f"Produit {index}",
+            )
+            for index in range(1, 21)
+        ],
+    )
+
+    response = AnswerBuilder().product_list(data)
+
+    assert response.answer.startswith(
+        "Voici 20 produits affichés sur 39 au total :"
+    )
+
+
+async def test_long_product_list_skips_slow_natural_generation() -> None:
+    """Conserve la liste exhaustive déterministe au-delà de dix produits."""
+
+    router = FakeIntentRouter(
+        ProductListIntent(
+            limit=20,
+            offset=0,
+        )
+    )
+    client = FakeMCPDataClient()
+    client.products = ProductListData(
+        count=39,
+        limit=20,
+        offset=0,
+        products=[
+            product_data(
+                product_id=index,
+                name=f"Produit {index}",
+            )
+            for index in range(1, 21)
+        ],
+    )
+    generator = FakeAnswerGenerator()
+    orchestrator = QueryOrchestrator(
+        router,
+        client,
+        AnswerBuilder(),
+        answer_generator=generator,
+    )
+
+    response = await orchestrator.handle(
+        "liste les produits du catalogue"
+    )
+
+    assert response.answer.startswith(
+        "Voici 20 produits affichés sur 39 au total :"
+    )
+    assert generator.calls == []
+
+
+async def test_product_list_answer_displays_ten_products() -> None:
+    """Présente les dix éléments d'une page complète."""
+
+    products = [
+        product_data(
+            product_id=index,
+            name=f"Produit {index}",
+            unit_price=index + 0.5,
+        )
+        for index in range(1, 11)
+    ]
+    data = ProductListData(
+        count=10,
+        limit=10,
+        offset=0,
+        products=products,
+    )
+
+    response = AnswerBuilder().product_list(data)
+
+    assert response.answer.startswith(
+        "10 produits ont été trouvés :"
+    )
+    assert response.answer.count("\n- #") == 10
+    assert "- #1 — Produit 1 — 1,50 EUR" in response.answer
+    assert "- #10 — Produit 10 — 10,50 EUR" in response.answer
+    assert response.data is data
+
+
+async def test_orchestrator_rejects_incoherent_product_page() -> None:
+    """Refuse qu'une réponse MCP dépasse la pagination demandée."""
+
+    router = FakeIntentRouter(ProductListIntent(limit=5))
+    client = FakeMCPDataClient()
+    client.products = ProductListData(
+        count=10,
+        limit=10,
+        offset=0,
+        products=[product_data()],
+    )
+    orchestrator = QueryOrchestrator(
+        router,
+        client,
+        AnswerBuilder(),
+    )
+
+    response = await orchestrator.handle(
+        "liste les cinq premiers produits"
+    )
+
+    assert isinstance(response, ErrorResponse)
+    assert response.error.code == "invalid_service_response"
+    assert client.calls == [
+        (
+            "list_products",
+            {
+                "limit": 5,
+                "offset": 0,
+            },
+        )
+    ]
+
+
 @pytest.mark.parametrize(
     ("intent", "data_attribute", "empty_value", "expected_answer"),
     [
@@ -446,10 +710,16 @@ async def test_stock_by_branch_lists_each_validated_stock() -> None:
         stocks=[
             {
                 "product_id": 4,
+                "product_name": "Clavier compact",
+                "unit_price": 49.99,
+                "currency": "EUR",
                 "quantity": 1,
             },
             {
                 "product_id": 7,
+                "product_name": "Écran 24 pouces",
+                "unit_price": 169.99,
+                "currency": "EUR",
                 "quantity": 5,
             },
         ],
@@ -463,9 +733,11 @@ async def test_stock_by_branch_lists_each_validated_stock() -> None:
     response = await orchestrator.handle("stock de la branche 3")
 
     assert response.answer == (
-        "La branche Carcassonne possède :\n"
-        "- produit 4 : 1 unité\n"
-        "- produit 7 : 5 unités"
+        "La branche Carcassonne possède 2 références en stock :\n"
+        "- Produit n°4 — Quantité : 1 — Nom : Clavier compact — "
+        "Prix unitaire : 49,99 EUR\n"
+        "- Produit n°7 — Quantité : 5 — Nom : Écran 24 pouces — "
+        "Prix unitaire : 169,99 EUR"
     )
     assert response.data is client.by_branch
     assert client.calls == [
@@ -473,6 +745,33 @@ async def test_stock_by_branch_lists_each_validated_stock() -> None:
             "get_stock_by_branch",
             {
                 "branch_id": 3,
+            },
+        )
+    ]
+
+
+async def test_stock_by_branch_name_makes_one_mcp_call() -> None:
+    """Transmet uniquement le nom puis utilise la branche réelle retournée."""
+
+    router = FakeIntentRouter(
+        StockByBranchIntent(branch_name="toulouse")
+    )
+    client = FakeMCPDataClient()
+    orchestrator = QueryOrchestrator(
+        router,
+        client,
+        AnswerBuilder(),
+    )
+
+    response = await orchestrator.handle("stock de Toulouse")
+
+    assert response.type == "stock_by_branch"
+    assert client.calls == [
+        (
+            "get_stock_by_branch",
+            {
+                "branch_id": None,
+                "branch_name": "toulouse",
             },
         )
     ]
@@ -550,10 +849,13 @@ async def test_shopping_list_names_each_matching_branch() -> None:
 
 
 async def test_unsupported_intent_never_calls_mcp() -> None:
-    """Retourne une clarification réussie sans fait métier."""
+    """Retourne le refus hors domaine sans fait métier."""
 
     router = FakeIntentRouter(
-        UnsupportedIntent(reason="Demande ambiguë.")
+        UnsupportedIntent(
+            reason="Demande hors domaine.",
+            reason_code="out_of_domain",
+        )
     )
     client = FakeMCPDataClient()
     orchestrator = QueryOrchestrator(
@@ -564,16 +866,19 @@ async def test_unsupported_intent_never_calls_mcp() -> None:
 
     response = await orchestrator.handle("question ambiguë")
 
-    assert response.type == "text"
+    assert response.type == "unsupported"
     assert response.success is True
     assert response.data is None
     assert response.error is None
-    assert "une seule action" in response.answer
+    assert response.answer == (
+        "Je peux uniquement répondre aux questions concernant les produits, "
+        "les stocks, les branches et les listes d’achats de HBntory."
+    )
     assert client.calls == []
 
 
-async def test_disconnected_client_returns_error_before_routing() -> None:
-    """Retourne une indisponibilité sans appel ni valeur inventée."""
+async def test_disconnected_client_returns_error_after_routing() -> None:
+    """Classe d'abord, puis retourne l'indisponibilité sans fait inventé."""
 
     router = FakeIntentRouter(
         ProductDetailsIntent(product_id=12)
@@ -591,7 +896,7 @@ async def test_disconnected_client_returns_error_before_routing() -> None:
     assert isinstance(response, ErrorResponse)
     assert response.error.code == "service_unavailable"
     assert response.data is None
-    assert router.questions == []
+    assert router.questions == ["question"]
     assert client.calls == []
 
 
