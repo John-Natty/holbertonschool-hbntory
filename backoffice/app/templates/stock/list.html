@@ -4,86 +4,124 @@
     Stock — HBntory
 {% endblock %}
 
+{% macro product_card(card, available) %}
+    <article
+        class="product-card{{ '' if available else ' is-empty' }}"
+        data-product-id="{{ card.id }}"
+    >
+        <div class="product-card-media">
+            <img
+                class="product-card-image"
+                src="{{ url_for('static', filename=card.image) }}"
+                alt=""
+                loading="lazy"
+            >
+        </div>
+
+        <div class="product-card-body">
+            <p class="product-card-name">{{ card.name }}</p>
+
+            <p class="product-card-price">
+                {% if card.unit_price is number %}
+                    {{ "%.2f"|format(card.unit_price) }} {{ card.currency }}
+                {% else %}
+                    &mdash;
+                {% endif %}
+            </p>
+
+            <div class="product-card-actions">
+                <span class="product-card-qty">
+                    <span class="product-card-qty-label">QTE</span>
+                    <span class="product-card-qty-value">
+                        {{ card.quantity }}
+                    </span>
+                </span>
+
+                <button
+                    type="button"
+                    class="step step-up"
+                    data-step="1"
+                    aria-label="Ajouter une unité"
+                >+</button>
+
+                <button
+                    type="button"
+                    class="step step-down"
+                    data-step="-1"
+                    aria-label="Retirer une unité"
+                    {{ '' if available else 'disabled' }}
+                >&minus;</button>
+            </div>
+        </div>
+    </article>
+{% endmacro %}
+
 {% block content %}
-    <section>
-        <h2>
-            Stock de {{ current_user.branch.name }}
-        </h2>
+    <section class="stock-header">
+        <h2>Stock de {{ current_user.branch.name }}</h2>
 
-        {% if rows %}
-            <table>
-                <thead>
-                    <tr>
-                        <th>Produit</th>
-                        <th>Identifiant</th>
-                        <th>Quantité</th>
-                    </tr>
-                </thead>
+        <p class="stock-identity">
+            {{ current_user.username }} // {{ current_user.role }}
+        </p>
+    </section>
 
-                <tbody>
-                    {% for row in rows %}
-                        <tr>
-                            <td>{{ row.name }}</td>
-                            <td>{{ row.product_id }}</td>
-                            <td>{{ row.quantity }}</td>
-                        </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        {% else %}
-            <p>
+    <div
+        id="catalog"
+        class="catalog"
+        data-move-url="{{ url_for(
+            'stock.move_branch_stock',
+            branch_id=branch_id
+        ) }}"
+        data-csrf-token="{{ csrf_token() }}"
+    >
+        <section class="catalog-group">
+            <h3>
+                En stock
+                <span class="catalog-count" data-count="present">
+                    {{ in_stock|length }}
+                </span>
+            </h3>
+
+            <div id="stock-present" class="product-grid">
+                {% for card in in_stock %}
+                    {{ product_card(card, True) }}
+                {% endfor %}
+            </div>
+
+            <p
+                class="catalog-empty"
+                data-empty="present"
+                {{ '' if in_stock|length == 0 else 'hidden' }}
+            >
                 Aucun produit en stock dans cette branche.
             </p>
-        {% endif %}
-    </section>
+        </section>
 
-    <section>
-        <h3>Modifier le stock</h3>
+        <section class="catalog-group">
+            <h3>
+                Absent de cette branche
+                <span class="catalog-count" data-count="absent">
+                    {{ missing|length }}
+                </span>
+            </h3>
 
-        <form method="post">
-            {{ form.csrf_token }}
-
-            <p>
-                {{ form.product_id.label }}
-                {{ form.product_id(id="product_id") }}
-
-                {% for error in form.product_id.errors %}
-                    <span class="message danger">
-                        {{ error }}
-                    </span>
+            <div id="stock-absent" class="product-grid is-faded">
+                {% for card in missing %}
+                    {{ product_card(card, False) }}
                 {% endfor %}
-            </p>
+            </div>
 
-            <p>
-                {{ form.amount.label }}
-                {{ form.amount(id="amount") }}
-
-                {% for error in form.amount.errors %}
-                    <span class="message danger">
-                        {{ error }}
-                    </span>
-                {% endfor %}
-            </p>
-
-            <button
-                type="submit"
-                formaction="{{ url_for(
-                    'stock.add_branch_stock',
-                    branch_id=branch_id
-                ) }}"
+            <p
+                class="catalog-empty"
+                data-empty="absent"
+                {{ '' if missing|length == 0 else 'hidden' }}
             >
-                Ajouter
-            </button>
+                Tous les produits du catalogue sont en stock.
+            </p>
+        </section>
+    </div>
+{% endblock %}
 
-            <button
-                type="submit"
-                formaction="{{ url_for(
-                    'stock.remove_branch_stock',
-                    branch_id=branch_id
-                ) }}"
-            >
-                Retirer
-            </button>
-        </form>
-    </section>
+{% block scripts %}
+    <script src="{{ url_for('static', filename='stock.js') }}"></script>
 {% endblock %}

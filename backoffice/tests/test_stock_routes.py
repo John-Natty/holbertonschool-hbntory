@@ -17,8 +17,44 @@ ADMIN_PASSWORD = "MotDePasseAdmin123!"
 
 
 @pytest.fixture
-def stock_app():
+def stock_app(monkeypatch):
     """Prépare une application de test avec deux branches et deux comptes."""
+
+    def fake_get_product(product_id):
+        """Retourne un produit stable ou simule une référence inconnue."""
+
+        if product_id == 999999:
+            from app.services.product_api import ProductNotFoundError
+
+            raise ProductNotFoundError("Produit introuvable.")
+
+        return {
+            "id": product_id,
+            "name": f"Produit {product_id}",
+            "category": "Tests",
+            "unit_price": 19.99,
+            "currency": "EUR",
+        }
+
+    def fake_list_products(limit=20, offset=0):
+        """Retourne un catalogue déterministe sans appel réseau."""
+
+        products = [fake_get_product(PRODUCT_ID)]
+        return {
+            "count": len(products),
+            "limit": limit,
+            "offset": offset,
+            "results": products[offset:offset + limit],
+        }
+
+    monkeypatch.setattr(
+        "app.stock.routes.product_api.get_product",
+        fake_get_product,
+    )
+    monkeypatch.setattr(
+        "app.stock.routes.product_api.list_products",
+        fake_list_products,
+    )
 
     app = create_app(
         {
@@ -300,13 +336,15 @@ def test_ajout_refuse_un_produit_inexistant(stock_app, client):
         assert ops.get_stock_quantity(branch_id, 999999) == 0
 
 
-def test_le_menu_montre_le_lien_stock_au_common_user(stock_app, client):
-    """Le menu propose un lien vers le stock de la branche du common user."""
+def test_le_common_user_arrive_sur_le_stock_de_sa_branche(stock_app, client):
+    """Le common user atterrit directement sur le stock de sa branche."""
 
     reponse = login(client, "employe", COMMON_PASSWORD)
     page = reponse.get_data(as_text=True)
 
-    assert ">Stock<" in page.replace(" ", "").replace("\n", "")
+    # Le menu ne propose plus de lien « Stock » : la page d'accueil EST
+    # le stock de la branche, le lien ferait doublon.
+    assert "Stock de Toulouse" in page
     assert f"/branches/{stock_app.config['TOULOUSE_ID']}/stock" in page
 
 

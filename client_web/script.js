@@ -6,6 +6,34 @@ const AI_QUERY_URL = "http://localhost:8001/api/query";
 const AI_PRODUCTS_URL = "http://localhost:8001/api/products";
 const CONVERSATION_STORAGE_KEY = "hbntory-conversation-id";
 
+// Produits disposant de leur propre illustration, dans img/products/,
+// nommée d'après l'identifiant du produit. Un produit absent de cette
+// liste utilise l'image de sa catégorie.
+const PRODUCTS_WITH_IMAGE = new Set([
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+    11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+    21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+    31, 33, 34, 35, 36, 37, 38, 39, 40,
+]);
+
+const CATEGORY_IMAGES = {
+    "Accessories": "img/categories/accessories.webp",
+    "Audio": "img/categories/audio.webp",
+    "Development Kits": "img/categories/development-kits.webp",
+    "Displays": "img/categories/displays.webp",
+    "Furniture": "img/categories/furniture.webp",
+    "Laptops": "img/categories/laptops.webp",
+    "Mobile Devices": "img/categories/mobile-devices.webp",
+    "Networking": "img/categories/networking.webp",
+    "Operations": "img/categories/operations.webp",
+    "Power": "img/categories/power.webp",
+    "Security": "img/categories/security.webp",
+    "Storage": "img/categories/storage.webp",
+    "Video": "img/categories/video.webp",
+};
+
+const DEFAULT_CATEGORY_IMAGE = "img/categories/default.webp";
+
 // Récupère les éléments manipulés par le script.
 const form = document.getElementById("question-form");
 const input = document.getElementById("question");
@@ -14,9 +42,9 @@ const loading = document.getElementById("loading");
 const answer = document.getElementById("answer");
 const error = document.getElementById("error");
 
-// Éléments du panneau catalogue (colonne de droite).
+// Éléments du catalogue affiché sous l'assistant.
 const catalogStatus = document.getElementById("catalog-status");
-const catalogList = document.getElementById("catalog-list");
+const catalogGrid = document.getElementById("catalog-grid");
 let conversationId = null;
 
 try {
@@ -179,18 +207,6 @@ function fillQuestion(question) {
 }
 
 
-// Relie chaque commande du panneau gauche au champ de l'assistant.
-function bindCommandButtons() {
-    const buttons = document.querySelectorAll(".cmd-item");
-
-    for (const button of buttons) {
-        button.addEventListener("click", function () {
-            fillQuestion(button.textContent.trim());
-        });
-    }
-}
-
-
 // Met en forme un prix avec sa devise, ou un tiret si absent.
 function formatPrice(product) {
     if (typeof product.unit_price !== "number") {
@@ -201,36 +217,67 @@ function formatPrice(product) {
 }
 
 
-// Construit une entrée du catalogue : le clic compose la question
-// de stock correspondante dans l'assistant, sans l'envoyer.
-function buildCatalogItem(product) {
+// Retourne l'illustration propre au produit, celle de sa catégorie,
+// ou l'illustration de repli.
+function productImage(product) {
+    if (PRODUCTS_WITH_IMAGE.has(product.id)) {
+        return "img/products/" + product.id + ".webp";
+    }
+
+    return CATEGORY_IMAGES[product.category] || DEFAULT_CATEGORY_IMAGE;
+}
+
+
+// Construit la zone image d'une carte.
+function buildCardMedia(product) {
+    const media = document.createElement("span");
+    const image = document.createElement("img");
+
+    media.className = "product-card-media";
+    image.className = "product-card-image";
+    image.src = productImage(product);
+    image.loading = "lazy";
+    image.alt = "";
+    media.appendChild(image);
+
+    return media;
+}
+
+
+// Construit le nom et le prix affichés sous l'image.
+function buildCardBody(product) {
+    const body = document.createElement("span");
+    const name = document.createElement("span");
+    const price = document.createElement("span");
+
+    body.className = "product-card-body";
+    name.className = "product-card-name";
+    name.textContent = product.name || "—";
+    price.className = "product-card-price";
+    price.textContent = formatPrice(product);
+    body.appendChild(name);
+    body.appendChild(price);
+
+    return body;
+}
+
+
+// Construit une carte produit : le clic prépare une question de stock
+// dans l'assistant sans l'envoyer automatiquement.
+function buildProductCard(product) {
     const item = document.createElement("li");
-    const button = document.createElement("button");
+    const card = document.createElement("button");
 
-    button.type = "button";
-    button.className = "catalog-item";
-
-    const idSpan = document.createElement("span");
-    idSpan.className = "catalog-item-id";
-    idSpan.textContent = "#" + product.id;
-
-    const nameSpan = document.createElement("span");
-    nameSpan.className = "catalog-item-name";
-    nameSpan.textContent = product.name || "—";
-
-    const priceSpan = document.createElement("span");
-    priceSpan.className = "catalog-item-price";
-    priceSpan.textContent = formatPrice(product);
-
-    button.appendChild(idSpan);
-    button.appendChild(nameSpan);
-    button.appendChild(priceSpan);
-
-    button.addEventListener("click", function () {
-        fillQuestion("stock du produit " + product.id);
+    card.type = "button";
+    card.className = "product-card";
+    card.appendChild(buildCardMedia(product));
+    card.appendChild(buildCardBody(product));
+    card.addEventListener("click", function () {
+        fillQuestion(
+            "Où puis-je trouver le produit " + product.id + " ?"
+        );
     });
-
-    item.appendChild(button);
+    item.appendChild(card);
 
     return item;
 }
@@ -259,12 +306,12 @@ async function loadCatalog() {
         }
 
         for (const product of products) {
-            catalogList.appendChild(buildCatalogItem(product));
+            catalogGrid.appendChild(buildProductCard(product));
         }
 
-        // Remplace le message de chargement par la liste remplie.
+        // Remplace le message de chargement par la grille remplie.
         catalogStatus.hidden = true;
-        catalogList.hidden = false;
+        catalogGrid.hidden = false;
 
     } catch (networkError) {
         catalogStatus.textContent =
@@ -274,5 +321,4 @@ async function loadCatalog() {
 
 
 form.addEventListener("submit", handleSubmit);
-bindCommandButtons();
 loadCatalog();

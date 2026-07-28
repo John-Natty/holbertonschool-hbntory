@@ -5,6 +5,7 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 AI_SERVICE_ROOT = REPOSITORY_ROOT / "ai_service"
+CLIENT_WEB_ROOT = REPOSITORY_ROOT / "client_web"
 
 
 def _compose_service_block(service_name: str) -> str:
@@ -216,3 +217,35 @@ def test_compose_ollama_is_started_and_persists_only_models() -> None:
     assert "- ollama\n        - list" in service
     assert "ollama pull" not in compose
     assert "\n  ollama-data:" in compose
+
+
+def test_client_catalog_keeps_conversation_and_bypasses_generation() -> None:
+    """Vérifie l'intégration des cartes avec le contrat IA moderne."""
+
+    html = CLIENT_WEB_ROOT.joinpath("index.html").read_text(
+        encoding="utf-8"
+    )
+    script = CLIENT_WEB_ROOT.joinpath("script.js").read_text(
+        encoding="utf-8"
+    )
+    dockerfile = CLIENT_WEB_ROOT.joinpath("Dockerfile").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'id="catalog-grid"' in html
+    assert 'id="catalog-list"' not in html
+    assert "COPY img/ /usr/share/nginx/html/img/" in dockerfile
+    assert CLIENT_WEB_ROOT.joinpath(
+        "img/categories/default.webp"
+    ).is_file()
+    assert "const catalogGrid" in script
+    assert "buildProductCard(product)" in script
+    assert "CONVERSATION_STORAGE_KEY" in script
+    assert "sessionStorage.getItem" in script
+    assert "sessionStorage.setItem" in script
+    assert (
+        'AI_PRODUCTS_URL + "?limit=100&offset=0"'
+        in script
+    )
+    assert 'askQuestion("liste les 100 premiers produits")' not in script
+    assert 'data.type === "stock_by_product"' not in script
