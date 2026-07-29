@@ -60,32 +60,32 @@ class IntentClassifierResponseError(IntentClassifierError):
     """Signale une réponse de classification invalide."""
 
 
-class MiniMaxClientError(Exception):
-    """Classe de base des erreurs MiniMax attendues et nettoyées."""
+class NVIDIAClientError(Exception):
+    """Classe de base des erreurs NVIDIA attendues et nettoyées."""
 
 
-class MiniMaxTimeoutError(MiniMaxClientError):
-    """Signale le dépassement du délai d'un appel MiniMax."""
+class NVIDIATimeoutError(NVIDIAClientError):
+    """Signale le dépassement du délai d'un appel NVIDIA."""
 
 
-class MiniMaxConnectionError(MiniMaxClientError):
-    """Signale une erreur réseau avant toute réponse MiniMax."""
+class NVIDIAConnectionError(NVIDIAClientError):
+    """Signale une erreur réseau avant toute réponse NVIDIA."""
 
 
-class MiniMaxAuthenticationError(MiniMaxClientError):
+class NVIDIAAuthenticationError(NVIDIAClientError):
     """Signale le refus des informations d'authentification."""
 
 
-class MiniMaxRateLimitError(MiniMaxClientError):
+class NVIDIARateLimitError(NVIDIAClientError):
     """Signale que le quota ou le débit autorisé est dépassé."""
 
 
-class MiniMaxServiceError(MiniMaxClientError):
-    """Signale un statut HTTP non réussi retourné par MiniMax."""
+class NVIDIAServiceError(NVIDIAClientError):
+    """Signale un statut HTTP non réussi retourné par NVIDIA."""
 
 
-class MiniMaxResponseError(MiniMaxClientError):
-    """Signale une réponse MiniMax vide ou structurellement invalide."""
+class NVIDIAResponseError(NVIDIAClientError):
+    """Signale une réponse NVIDIA vide ou structurellement invalide."""
 
 
 class GeneratedAnswerError(Exception):

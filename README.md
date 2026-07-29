@@ -43,7 +43,7 @@ ses fichiers `requirements.txt` et `requirements-dev.txt` séparés.
 ## Lancement des services
 
 Le mode Compose par défaut démarre PostgreSQL, l'API Produit, le Backoffice,
-le serveur MCP, Ollama, le service IA hybride et le client web :
+le serveur MCP, le service IA et le client web :
 
 ```bash
 cp .env.example .env
@@ -53,10 +53,15 @@ docker compose up -d
 docker compose ps
 ```
 
+Le fournisseur principal est MiniMax-M3 via l’API NVIDIA. Renseigner
+`NVIDIA_API_KEY` active ses deux usages bornés : classification et rédaction.
+Sans clé ou si NVIDIA est indisponible, le service démarre normalement avec
+les règles Python et `AnswerBuilder`. Aucun modèle local n’est démarré.
+
 Le service IA est ensuite accessible sur `http://localhost:8001` et sa route
 publique de question est `POST /api/query`. Le client web de développement
 est servi depuis `http://localhost:8080`, origine autorisée par défaut via
-`CORS_ALLOWED_ORIGINS`. Le modèle local configuré est `gemma3:latest`.
+`CORS_ALLOWED_ORIGINS`.
 
 ## Initialisation de la base de données
 
@@ -135,7 +140,8 @@ Voir les décisions acceptées dans [docs/adr/](docs/adr/).
 
 ## Limitations connues
 
-Le modèle Ollama doit être téléchargé une première fois avec
-`docker compose exec ollama ollama pull gemma3:latest`. Le mode `hybrid`
-continue à répondre avec les règles et `AnswerBuilder` si un fournisseur IA
-est indisponible.
+Le mode `nvidia` dépend d’Internet, d’une clé NVIDIA valide, des quotas du
+fournisseur et de la disponibilité du modèle `minimaxai/minimax-m3`.
+L’absence de clé ou une erreur fournisseur active `rules` et
+`AnswerBuilder`. Les conversations restent volatiles et locales à une seule
+instance du service IA.

@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from app.errors import GeneratedAnswerError, MiniMaxConnectionError
+from app.errors import GeneratedAnswerError, NVIDIAConnectionError
 from app.models.data import (
     BranchData,
     MatchingBranchData,
@@ -542,7 +542,7 @@ async def test_rejects_negative_text_for_available_claim() -> None:
     "leak",
     [
         "Consultez https://internal.example.",
-        "La valeur MINIMAX_API_KEY est cachée.",
+        "La valeur NVIDIA_API_KEY est cachée.",
         "Le résultat vient du MCP.",
         "Authorization: Bearer valeur-secrète.",
         "Une requête PostgreSQL confirme ce résultat.",
@@ -572,7 +572,7 @@ async def test_maps_expected_provider_error_to_generation_error() -> None:
 
     response = product_details_response()
     client = FakeCompletionClient(
-        error=MiniMaxConnectionError("network")
+        error=NVIDIAConnectionError("network")
     )
 
     with pytest.raises(GeneratedAnswerError):

@@ -54,7 +54,7 @@ def test_ai_dockerfile_is_production_only_and_non_root() -> None:
     assert "EXPOSE 8001" in dockerfile
     assert "http://localhost:8001/health" in dockerfile
     assert "--reload" not in dockerfile
-    assert "ollama pull" not in dockerfile
+    assert "11434" not in dockerfile
     assert (
         'CMD ["python", "-m", "uvicorn", "app.main:app", '
         '"--host", "0.0.0.0", "--port", "8001"]'
@@ -88,8 +88,8 @@ def test_ai_dockerignore_excludes_local_and_test_files() -> None:
     } <= entries
 
 
-def test_compose_ai_service_configures_hybrid_without_secret() -> None:
-    """Contrôle Ollama, NVIDIA, MCP et l'absence de secrets internes."""
+def test_compose_ai_service_configures_nvidia_without_secret() -> None:
+    """Contrôle NVIDIA, MCP et l'absence de secrets internes."""
 
     service = _compose_service_block("ai-service")
 
@@ -123,7 +123,7 @@ def test_compose_ai_service_configures_hybrid_without_secret() -> None:
         "${CONVERSATION_MAX_SESSIONS:-1000}"
         in service
     )
-    assert "AI_MODEL_PROVIDER: ${AI_MODEL_PROVIDER:-hybrid}" in service
+    assert "AI_MODEL_PROVIDER: ${AI_MODEL_PROVIDER:-nvidia}" in service
     assert "NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}" in service
     assert (
         "NVIDIA_BASE_URL: "
@@ -136,7 +136,7 @@ def test_compose_ai_service_configures_hybrid_without_secret() -> None:
     )
     assert (
         "NVIDIA_REQUEST_TIMEOUT_SECONDS: "
-        "${NVIDIA_REQUEST_TIMEOUT_SECONDS:-120}"
+        "${NVIDIA_REQUEST_TIMEOUT_SECONDS:-60}"
         in service
     )
     assert (
@@ -149,50 +149,10 @@ def test_compose_ai_service_configures_hybrid_without_secret() -> None:
         "${NVIDIA_ANSWER_MAX_TOKENS:-1000}"
         in service
     )
-    assert "MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}" in service
-    assert (
-        "MINIMAX_BASE_URL: "
-        "${MINIMAX_BASE_URL:-https://api.minimax.io/v1}"
-        in service
-    )
-    assert "MINIMAX_MODEL: ${MINIMAX_MODEL:-MiniMax-M3}" in service
-    assert (
-        "MINIMAX_REQUEST_TIMEOUT_SECONDS: "
-        "${MINIMAX_REQUEST_TIMEOUT_SECONDS:-60}"
-        in service
-    )
-    assert (
-        "MINIMAX_CLASSIFICATION_MAX_TOKENS: "
-        "${MINIMAX_CLASSIFICATION_MAX_TOKENS:-600}"
-        in service
-    )
-    assert (
-        "MINIMAX_ANSWER_MAX_TOKENS: "
-        "${MINIMAX_ANSWER_MAX_TOKENS:-1000}"
-        in service
-    )
-    assert "OLLAMA_BASE_URL: http://ollama:11434" in service
-    assert "OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:latest}" in service
-    assert (
-        "OLLAMA_REQUEST_TIMEOUT_SECONDS: "
-        "${OLLAMA_REQUEST_TIMEOUT_SECONDS:-60}"
-        in service
-    )
-    assert (
-        "OLLAMA_CLASSIFICATION_MAX_TOKENS: "
-        "${OLLAMA_CLASSIFICATION_MAX_TOKENS:-600}"
-        in service
-    )
-    assert (
-        "OLLAMA_ANSWER_MAX_TOKENS: "
-        "${OLLAMA_ANSWER_MAX_TOKENS:-1000}"
-        in service
-    )
     assert "${AI_SERVICE_HOST_PORT:-8001}:8001" in service
     assert "product-mcp-server:" in service
     assert "condition: service_started" in service
-    assert "\n      ollama:" in service
-    assert "condition: service_healthy" in service
+    assert "11434" not in service
     assert "http://localhost:8001/health" in service
     assert "http://localhost:8001/ready" not in service
     assert "DATABASE_URL" not in service
@@ -202,21 +162,14 @@ def test_compose_ai_service_configures_hybrid_without_secret() -> None:
     assert "volumes:" not in service
 
 
-def test_compose_ollama_is_started_and_persists_only_models() -> None:
-    """Vérifie le service local, le healthcheck et son volume."""
+def test_compose_contains_no_local_model_service_or_volume() -> None:
+    """Vérifie que la pile ne démarre ni modèle local ni volume associé."""
 
     compose = REPOSITORY_ROOT.joinpath(
         "docker-compose.yml"
     ).read_text(encoding="utf-8")
-    service = _compose_service_block("ollama")
-
-    assert "image: ollama/ollama:" in service
-    assert "profiles:" not in service
-    assert "11434}:11434" in service
-    assert "ollama-data:/root/.ollama" in service
-    assert "- ollama\n        - list" in service
-    assert "ollama pull" not in compose
-    assert "\n  ollama-data:" in compose
+    assert "11434" not in compose
+    assert "ollama" not in compose.lower()
 
 
 def test_client_catalog_keeps_conversation_and_bypasses_generation() -> None:

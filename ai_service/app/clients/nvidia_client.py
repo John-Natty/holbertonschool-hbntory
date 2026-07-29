@@ -1,29 +1,24 @@
-"""Client asynchrone partagé de l'API MiniMax compatible OpenAI."""
+"""Client asynchrone partagé de MiniMax-M3 via l'API NVIDIA."""
 
-from collections.abc import Callable, Mapping, Sequence
-from typing import Literal
+from collections.abc import Callable, Sequence
 
 import httpx
 
 from app.errors import (
-    MiniMaxAuthenticationError,
-    MiniMaxConnectionError,
-    MiniMaxRateLimitError,
-    MiniMaxResponseError,
-    MiniMaxServiceError,
-    MiniMaxTimeoutError,
+    NVIDIAAuthenticationError,
+    NVIDIAConnectionError,
+    NVIDIARateLimitError,
+    NVIDIAResponseError,
+    NVIDIAServiceError,
+    NVIDIATimeoutError,
 )
 
 
 ChatMessage = dict[str, str]
 HTTPClientFactory = Callable[..., httpx.AsyncClient]
-TokenParameter = Literal[
-    "max_tokens",
-    "max_completion_tokens",
-]
 
 
-class MiniMaxClient:
+class NVIDIAClient:
     """Partage un transport HTTP sans mémoire ni tool calling."""
 
     def __init__(
@@ -34,8 +29,6 @@ class MiniMaxClient:
         model: str,
         request_timeout_seconds: float,
         client_factory: HTTPClientFactory = httpx.AsyncClient,
-        token_parameter: TokenParameter = "max_completion_tokens",
-        additional_payload: Mapping[str, object] | None = None,
     ) -> None:
         """Construit un seul transport vers Chat Completions."""
 
@@ -44,14 +37,6 @@ class MiniMaxClient:
             f"{base_url.rstrip('/')}/chat/completions"
         )
         self._api_key = api_key
-        self._token_parameter = token_parameter
-        self._additional_payload = dict(
-            additional_payload
-            if additional_payload is not None
-            else {
-                "reasoning_split": True,
-            }
-        )
         self._client = client_factory(
             timeout=request_timeout_seconds,
         )
@@ -67,9 +52,8 @@ class MiniMaxClient:
         payload: dict[str, object] = {
             "model": self._model,
             "messages": list(messages),
-            self._token_parameter: max_tokens,
+            "max_tokens": max_tokens,
             "stream": False,
-            **self._additional_payload,
         }
 
         try:
@@ -82,59 +66,59 @@ class MiniMaxClient:
                 json=payload,
             )
         except httpx.TimeoutException as error:
-            raise MiniMaxTimeoutError(
+            raise NVIDIATimeoutError(
                 "Le délai du fournisseur IA est dépassé."
             ) from error
         except httpx.RequestError as error:
-            raise MiniMaxConnectionError(
+            raise NVIDIAConnectionError(
                 "Le fournisseur IA n'est pas joignable."
             ) from error
 
         if response.status_code == 401:
-            raise MiniMaxAuthenticationError(
+            raise NVIDIAAuthenticationError(
                 "Le fournisseur IA a refusé l'authentification."
             )
 
         if response.status_code == 429:
-            raise MiniMaxRateLimitError(
+            raise NVIDIARateLimitError(
                 "Le fournisseur IA limite temporairement les requêtes."
             )
 
         if not response.is_success:
-            raise MiniMaxServiceError(
+            raise NVIDIAServiceError(
                 "Le fournisseur IA a retourné une erreur."
             )
 
         try:
             payload = response.json()
         except ValueError as error:
-            raise MiniMaxResponseError(
+            raise NVIDIAResponseError(
                 "La réponse du fournisseur IA est invalide."
             ) from error
 
         if not isinstance(payload, dict):
-            raise MiniMaxResponseError(
+            raise NVIDIAResponseError(
                 "La réponse du fournisseur IA est invalide."
             )
 
         choices = payload.get("choices")
 
         if not isinstance(choices, list) or len(choices) != 1:
-            raise MiniMaxResponseError(
+            raise NVIDIAResponseError(
                 "La réponse du fournisseur IA est invalide."
             )
 
         choice = choices[0]
 
         if not isinstance(choice, dict):
-            raise MiniMaxResponseError(
+            raise NVIDIAResponseError(
                 "La réponse du fournisseur IA est invalide."
             )
 
         message = choice.get("message")
 
         if not isinstance(message, dict):
-            raise MiniMaxResponseError(
+            raise NVIDIAResponseError(
                 "La réponse du fournisseur IA est invalide."
             )
 
@@ -143,12 +127,12 @@ class MiniMaxClient:
         content = message.get("content")
 
         if tool_calls or function_call:
-            raise MiniMaxResponseError(
+            raise NVIDIAResponseError(
                 "Le fournisseur IA a tenté un appel d'outil interdit."
             )
 
         if not isinstance(content, str) or not content.strip():
-            raise MiniMaxResponseError(
+            raise NVIDIAResponseError(
                 "La réponse du fournisseur IA est vide."
             )
 

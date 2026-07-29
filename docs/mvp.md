@@ -33,11 +33,9 @@ on la termine avant toute autre chose. La **partie 2** liste ce qui est
 - Indiquer les branches possédant un produit.
 - Lister les produits disponibles dans une branche.
 - Indiquer quelle branche peut satisfaire une liste d'achats.
-- Choisir un seul fournisseur au démarrage : MiniMax direct, MiniMax-M3 via
-  NVIDIA ou Ollama local, avec fallback déterministe.
+- Utiliser MiniMax-M3 via NVIDIA en mode principal, avec règles locales et
+  `AnswerBuilder` comme fallback déterministe.
 - Rédiger une réponse naturelle ancrée, avec fallback déterministe.
-- Conserver une conversation courte en RAM avec identifiant opaque, TTL et
-  limites de capacité.
 - Conserver un maximum d'un appel MCP métier et aucun tool calling IA.
 
 ### Client public
@@ -62,6 +60,11 @@ que si le scope obligatoire est **entièrement terminé** :
 - Meilleure recherche produit.
 - Styling de l'interface.
 - Déploiement cloud.
+
+Amélioration déjà intégrée, mais non requise par le parcours REST initial :
+
+- conversation multi-tour courte en RAM avec identifiant opaque, TTL, LRU et
+  limites de capacité.
 
 > **Règle :** une option de la partie 2 ne compense **jamais** un élément
 > obligatoire de la partie 1 laissé incomplet. Le scope obligatoire passe

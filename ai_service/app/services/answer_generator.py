@@ -10,7 +10,7 @@ import unicodedata
 
 from pydantic import BaseModel, ValidationError
 
-from app.errors import GeneratedAnswerError, MiniMaxClientError
+from app.errors import GeneratedAnswerError, NVIDIAClientError
 from app.models.generation import (
     BranchStockItemClaim,
     BranchStockSummaryClaim,
@@ -57,7 +57,7 @@ _NUMBER_PATTERN = re.compile(
 _URL_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
 _TECHNICAL_PATTERN = re.compile(
     r"(?i)(?:https?://|mcp|postgresql|database_url|"
-    r"internal_api_key|minimax_api_key|x-internal-api-key|"
+    r"internal_api_key|nvidia_api_key|x-internal-api-key|"
     r"authorization\s*:|bearer\s+|traceback|stack trace|"
     r"\bsql\b|api interne|message syst[eè]me)"
 )
@@ -184,7 +184,7 @@ class AnswerGenerator:
                 max_tokens=self._max_tokens,
             )
             generated = GeneratedAnswer.model_validate_json(content)
-        except (MiniMaxClientError, ValueError, ValidationError) as error:
+        except (NVIDIAClientError, ValueError, ValidationError) as error:
             raise GeneratedAnswerError(
                 "La rédaction du fournisseur IA est invalide."
             ) from error

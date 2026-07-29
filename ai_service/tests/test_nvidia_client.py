@@ -1,4 +1,4 @@
-"""Tests sans réseau du client MiniMax compatible OpenAI."""
+"""Tests sans réseau du client MiniMax-M3 via NVIDIA."""
 
 import json
 from typing import Any
@@ -6,14 +6,14 @@ from typing import Any
 import httpx
 import pytest
 
-from app.clients.minimax_client import MiniMaxClient
+from app.clients.nvidia_client import NVIDIAClient
 from app.errors import (
-    MiniMaxAuthenticationError,
-    MiniMaxConnectionError,
-    MiniMaxRateLimitError,
-    MiniMaxResponseError,
-    MiniMaxServiceError,
-    MiniMaxTimeoutError,
+    NVIDIAAuthenticationError,
+    NVIDIAConnectionError,
+    NVIDIARateLimitError,
+    NVIDIAResponseError,
+    NVIDIAServiceError,
+    NVIDIATimeoutError,
 )
 
 
@@ -43,7 +43,7 @@ def completion_response(
         "id": "chatcmpl-test",
         "object": "chat.completion",
         "created": 1,
-        "model": "MiniMax-M3",
+        "model": "minimaxai/minimax-m3",
         "choices": [
             {
                 "index": 0,
@@ -77,14 +77,14 @@ class HTTPFactory:
         return http_client
 
 
-def create_client(handler: Any) -> tuple[MiniMaxClient, HTTPFactory]:
+def create_client(handler: Any) -> tuple[NVIDIAClient, HTTPFactory]:
     """Construit le client testé sans sortie réseau."""
 
     factory = HTTPFactory(handler)
-    client = MiniMaxClient(
+    client = NVIDIAClient(
         api_key=SECRET,
-        base_url="https://minimax.test/v1/",
-        model="MiniMax-M3",
+        base_url="https://integrate.api.nvidia.test/v1/",
+        model="minimaxai/minimax-m3",
         request_timeout_seconds=3,
         client_factory=factory,
     )
@@ -127,59 +127,16 @@ async def test_complete_sends_no_tools_and_returns_content() -> None:
     }
     assert captured is not None
     assert str(captured.url) == (
-        "https://minimax.test/v1/chat/completions"
+        "https://integrate.api.nvidia.test/v1/chat/completions"
     )
     body = json.loads(captured.content)
     assert captured.headers["Authorization"] == f"Bearer {SECRET}"
-    assert body["model"] == "MiniMax-M3"
-    assert body["max_completion_tokens"] == 600
+    assert body["model"] == "minimaxai/minimax-m3"
+    assert body["max_tokens"] == 600
     assert body["stream"] is False
-    assert body["reasoning_split"] is True
     assert "tools" not in body
     assert "tool_choice" not in body
     assert factory.http_clients[0].is_closed is True
-
-
-async def test_complete_supports_nvidia_token_contract() -> None:
-    """Réutilise le client unique avec le contrat NVIDIA MiniMax-M3."""
-
-    captured: httpx.Request | None = None
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal captured
-        captured = request
-        return httpx.Response(
-            200,
-            json=completion_response('{"intent":"product_list"}'),
-        )
-
-    factory = HTTPFactory(handler)
-    client = MiniMaxClient(
-        api_key=SECRET,
-        base_url="https://integrate.api.nvidia.test/v1",
-        model="minimaxai/minimax-m3",
-        request_timeout_seconds=3,
-        client_factory=factory,
-        token_parameter="max_tokens",
-        additional_payload={},
-    )
-
-    try:
-        result = await client.complete(
-            [{"role": "user", "content": "Question"}],
-            max_tokens=700,
-        )
-    finally:
-        await client.aclose()
-
-    assert result == '{"intent":"product_list"}'
-    assert captured is not None
-    body = json.loads(captured.content)
-    assert body["max_tokens"] == 700
-    assert "max_completion_tokens" not in body
-    assert "reasoning_split" not in body
-    assert "tools" not in body
-    assert "tool_choice" not in body
 
 
 @pytest.mark.parametrize(
@@ -190,20 +147,20 @@ async def test_complete_supports_nvidia_token_contract() -> None:
                 "timeout",
                 request=httpx.Request(
                     "POST",
-                    "https://minimax.test/v1/chat/completions",
+                    "https://integrate.api.nvidia.test/v1/chat/completions",
                 ),
             ),
-            MiniMaxTimeoutError,
+            NVIDIATimeoutError,
         ),
         (
             httpx.ConnectError(
                 "network",
                 request=httpx.Request(
                     "POST",
-                    "https://minimax.test/v1/chat/completions",
+                    "https://integrate.api.nvidia.test/v1/chat/completions",
                 ),
             ),
-            MiniMaxConnectionError,
+            NVIDIAConnectionError,
         ),
     ],
 )
@@ -228,9 +185,9 @@ async def test_complete_maps_transport_errors(
 @pytest.mark.parametrize(
     ("status_code", "expected_error"),
     [
-        (401, MiniMaxAuthenticationError),
-        (429, MiniMaxRateLimitError),
-        (500, MiniMaxServiceError),
+        (401, NVIDIAAuthenticationError),
+        (429, NVIDIARateLimitError),
+        (500, NVIDIAServiceError),
     ],
 )
 async def test_complete_maps_http_errors_without_secret(
@@ -305,7 +262,7 @@ async def test_complete_rejects_invalid_or_tool_call_response(
     client, _factory = create_client(handler)
 
     try:
-        with pytest.raises(MiniMaxResponseError):
+        with pytest.raises(NVIDIAResponseError):
             await client.complete([], max_tokens=20)
     finally:
         await client.aclose()

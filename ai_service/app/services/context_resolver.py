@@ -104,7 +104,7 @@ _BRANCH_NAME_PATTERN = re.compile(
     r"(?P<branch>[a-z][a-z0-9' -]{0,99})$"
 )
 _AVAILABILITY_AT_PATTERN = re.compile(
-    r"\b(?:disponible|stock|reste)\s+(?:a|dans)\s+"
+    r"\b(?:disponibles?|stock|reste)\s+(?:a|dans)\s+"
     r"(?:(?:la|l)\s+)?(?:(?:branche|agence)\s+(?:de\s+)?)?"
     r"(?P<branch>[a-z][a-z0-9' -]{0,99})$"
 )
@@ -166,6 +166,8 @@ _SAME_BRANCH_MARKERS = (
     "dans le meme endroit",
 )
 _INVALID_BRANCH_NAMES = {
+    "branche",
+    "agence",
     "quelle branche",
     "quelles branches",
     "quelle agence",
@@ -281,6 +283,17 @@ class ContextResolver:
 
         if combined is not None:
             return combined
+
+        branch_id, branch_name = _extract_branch(normalized)
+
+        if (
+            (branch_id is not None or branch_name is not None)
+            and any(marker in normalized for marker in _STOCK_MARKERS)
+        ):
+            return StockByBranchIntent(
+                branch_id=branch_id,
+                branch_name=branch_name,
+            )
 
         return None
 

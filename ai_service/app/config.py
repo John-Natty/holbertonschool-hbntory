@@ -94,35 +94,20 @@ class Settings(BaseSettings):
     conversation_max_turns: ConversationTurnLimit = 10
     conversation_max_sessions: ConversationSessionLimit = 1000
     ai_model_provider: Literal[
-        "hybrid",
         "nvidia",
-        "minimax",
         "rules",
-        "ollama",
-    ] = "hybrid"
+    ] = "nvidia"
     nvidia_api_key: SecretStr | None = None
     nvidia_base_url: AnyHttpUrl = (
         "https://integrate.api.nvidia.com/v1"
     )
     nvidia_model: NonEmptyString = "minimaxai/minimax-m3"
-    nvidia_request_timeout_seconds: PositiveFiniteFloat = 120.0
+    nvidia_request_timeout_seconds: PositiveFiniteFloat = 60.0
     nvidia_classification_max_tokens: BoundedPositiveInt = 600
     nvidia_answer_max_tokens: BoundedPositiveInt = 1000
-    minimax_api_key: SecretStr | None = None
-    minimax_base_url: AnyHttpUrl = "https://api.minimax.io/v1"
-    minimax_model: NonEmptyString = "MiniMax-M3"
-    minimax_request_timeout_seconds: PositiveFiniteFloat = 60.0
-    minimax_classification_max_tokens: BoundedPositiveInt = 600
-    minimax_answer_max_tokens: BoundedPositiveInt = 1000
-    ollama_base_url: AnyHttpUrl = "http://ollama:11434"
-    ollama_model: NonEmptyString = "gemma3:latest"
-    ollama_request_timeout_seconds: PositiveFiniteFloat = 60.0
-    ollama_classification_max_tokens: BoundedPositiveInt = 600
-    ollama_answer_max_tokens: BoundedPositiveInt = 1000
 
     @field_validator(
         "nvidia_api_key",
-        "minimax_api_key",
         mode="before",
     )
     @classmethod
@@ -302,8 +287,6 @@ class Settings(BaseSettings):
 
     @field_validator(
         "nvidia_request_timeout_seconds",
-        "minimax_request_timeout_seconds",
-        "ollama_request_timeout_seconds",
         mode="before",
     )
     @classmethod
@@ -328,10 +311,6 @@ class Settings(BaseSettings):
     @field_validator(
         "nvidia_classification_max_tokens",
         "nvidia_answer_max_tokens",
-        "minimax_classification_max_tokens",
-        "minimax_answer_max_tokens",
-        "ollama_classification_max_tokens",
-        "ollama_answer_max_tokens",
         mode="before",
     )
     @classmethod
