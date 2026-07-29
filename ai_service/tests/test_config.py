@@ -26,17 +26,6 @@ CONFIGURATION_VARIABLES = {
     "NVIDIA_REQUEST_TIMEOUT_SECONDS",
     "NVIDIA_CLASSIFICATION_MAX_TOKENS",
     "NVIDIA_ANSWER_MAX_TOKENS",
-    "MINIMAX_API_KEY",
-    "MINIMAX_BASE_URL",
-    "MINIMAX_MODEL",
-    "MINIMAX_REQUEST_TIMEOUT_SECONDS",
-    "MINIMAX_CLASSIFICATION_MAX_TOKENS",
-    "MINIMAX_ANSWER_MAX_TOKENS",
-    "OLLAMA_BASE_URL",
-    "OLLAMA_MODEL",
-    "OLLAMA_REQUEST_TIMEOUT_SECONDS",
-    "OLLAMA_CLASSIFICATION_MAX_TOKENS",
-    "OLLAMA_ANSWER_MAX_TOKENS",
 }
 
 
@@ -73,34 +62,19 @@ def test_settings_use_docker_compose_defaults(monkeypatch):
     assert settings.conversation_ttl_seconds == 1800.0
     assert settings.conversation_max_turns == 10
     assert settings.conversation_max_sessions == 1000
-    assert settings.ai_model_provider == "hybrid"
+    assert settings.ai_model_provider == "nvidia"
     assert settings.nvidia_api_key is None
     assert str(settings.nvidia_base_url) == (
         "https://integrate.api.nvidia.com/v1"
     )
     assert settings.nvidia_model == "minimaxai/minimax-m3"
-    assert settings.nvidia_request_timeout_seconds == 120.0
+    assert settings.nvidia_request_timeout_seconds == 60.0
     assert settings.nvidia_classification_max_tokens == 600
     assert settings.nvidia_answer_max_tokens == 1000
-    assert settings.minimax_api_key is None
-    assert str(settings.minimax_base_url) == (
-        "https://api.minimax.io/v1"
-    )
-    assert settings.minimax_model == "MiniMax-M3"
-    assert settings.minimax_request_timeout_seconds == 60.0
-    assert settings.minimax_classification_max_tokens == 600
-    assert settings.minimax_answer_max_tokens == 1000
-    assert str(settings.ollama_base_url) == (
-        "http://ollama:11434/"
-    )
-    assert settings.ollama_model == "gemma3:latest"
-    assert settings.ollama_request_timeout_seconds == 60.0
-    assert settings.ollama_classification_max_tokens == 600
-    assert settings.ollama_answer_max_tokens == 1000
 
 
 def test_settings_read_environment(monkeypatch):
-    """Lit les trois paramètres depuis l'environnement."""
+    """Lit les paramètres NVIDIA depuis l'environnement."""
 
     clear_configuration_environment(monkeypatch)
     monkeypatch.setenv("AI_SERVICE_HOST", "127.0.0.1")
@@ -136,14 +110,14 @@ def test_settings_read_environment(monkeypatch):
     monkeypatch.setenv("CONVERSATION_TTL_SECONDS", "300")
     monkeypatch.setenv("CONVERSATION_MAX_TURNS", "4")
     monkeypatch.setenv("CONVERSATION_MAX_SESSIONS", "25")
-    monkeypatch.setenv("AI_MODEL_PROVIDER", "ollama")
+    monkeypatch.setenv("AI_MODEL_PROVIDER", "nvidia")
     monkeypatch.setenv(
-        "OLLAMA_BASE_URL",
-        "http://ollama.test:11435",
+        "NVIDIA_BASE_URL",
+        "https://nvidia.test/v1",
     )
-    monkeypatch.setenv("OLLAMA_MODEL", "gemma3:4b")
+    monkeypatch.setenv("NVIDIA_MODEL", "minimaxai/test-model")
     monkeypatch.setenv(
-        "OLLAMA_REQUEST_TIMEOUT_SECONDS",
+        "NVIDIA_REQUEST_TIMEOUT_SECONDS",
         "7.5",
     )
 
@@ -166,12 +140,24 @@ def test_settings_read_environment(monkeypatch):
     assert settings.conversation_ttl_seconds == 300.0
     assert settings.conversation_max_turns == 4
     assert settings.conversation_max_sessions == 25
-    assert settings.ai_model_provider == "ollama"
-    assert str(settings.ollama_base_url) == (
-        "http://ollama.test:11435/"
+    assert settings.ai_model_provider == "nvidia"
+    assert str(settings.nvidia_base_url) == (
+        "https://nvidia.test/v1"
     )
-    assert settings.ollama_model == "gemma3:4b"
-    assert settings.ollama_request_timeout_seconds == 7.5
+    assert settings.nvidia_model == "minimaxai/test-model"
+    assert settings.nvidia_request_timeout_seconds == 7.5
+
+
+@pytest.mark.parametrize("provider", ["nvidia", "rules"])
+def test_settings_accept_only_supported_providers(
+    monkeypatch,
+    provider,
+):
+    """Accepte explicitement les deux modes de l'architecture finale."""
+
+    clear_configuration_environment(monkeypatch)
+
+    assert Settings(ai_model_provider=provider).ai_model_provider == provider
 
 
 def test_settings_reject_extra_field(monkeypatch):
@@ -227,9 +213,11 @@ def test_settings_reject_extra_field(monkeypatch):
         ("conversation_max_sessions", True),
         ("conversation_max_sessions", 10_001),
         ("ai_model_provider", "unknown"),
-        ("ai_model_provider", "HYBRID"),
+        ("ai_model_provider", "ollama"),
+        ("ai_model_provider", "hybrid"),
+        ("ai_model_provider", "minimax"),
         ("ai_model_provider", "NVIDIA"),
-        ("ai_model_provider", "MINIMAX"),
+        ("ai_model_provider", "RULES"),
         ("nvidia_base_url", "ftp://nvidia.test"),
         ("nvidia_model", "   "),
         ("nvidia_request_timeout_seconds", 0),
@@ -243,32 +231,6 @@ def test_settings_reject_extra_field(monkeypatch):
         ("nvidia_answer_max_tokens", 0),
         ("nvidia_answer_max_tokens", True),
         ("nvidia_answer_max_tokens", 8193),
-        ("minimax_base_url", "ftp://minimax.test"),
-        ("minimax_model", "   "),
-        ("minimax_request_timeout_seconds", 0),
-        ("minimax_request_timeout_seconds", -1),
-        ("minimax_request_timeout_seconds", True),
-        ("minimax_request_timeout_seconds", float("inf")),
-        ("minimax_request_timeout_seconds", float("nan")),
-        ("minimax_classification_max_tokens", 0),
-        ("minimax_classification_max_tokens", True),
-        ("minimax_classification_max_tokens", 8193),
-        ("minimax_answer_max_tokens", 0),
-        ("minimax_answer_max_tokens", True),
-        ("minimax_answer_max_tokens", 8193),
-        ("ollama_base_url", "ftp://ollama.test"),
-        ("ollama_model", "   "),
-        ("ollama_request_timeout_seconds", 0),
-        ("ollama_request_timeout_seconds", -1),
-        ("ollama_request_timeout_seconds", True),
-        ("ollama_request_timeout_seconds", float("inf")),
-        ("ollama_request_timeout_seconds", float("nan")),
-        ("ollama_classification_max_tokens", 0),
-        ("ollama_classification_max_tokens", True),
-        ("ollama_classification_max_tokens", 8193),
-        ("ollama_answer_max_tokens", 0),
-        ("ollama_answer_max_tokens", True),
-        ("ollama_answer_max_tokens", 8193),
     ],
 )
 def test_settings_reject_invalid_values(
@@ -309,9 +271,7 @@ def test_blank_provider_keys_are_absent(
 
     clear_configuration_environment(monkeypatch)
     monkeypatch.setenv("NVIDIA_API_KEY", "   ")
-    monkeypatch.setenv("MINIMAX_API_KEY", "   ")
 
     settings = Settings()
 
     assert settings.nvidia_api_key is None
-    assert settings.minimax_api_key is None

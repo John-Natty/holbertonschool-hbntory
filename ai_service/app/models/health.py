@@ -19,11 +19,8 @@ class ReadyResponse(StrictModel):
     service: Literal["ai-service"] = "ai-service"
     mcp: Literal["connected"] = "connected"
     provider: Literal[
-        "hybrid",
         "nvidia",
-        "minimax",
         "rules",
-        "ollama",
     ]
     provider_status: Literal[
         "configured",
@@ -32,8 +29,6 @@ class ReadyResponse(StrictModel):
     ]
     active_provider: Literal[
         "nvidia",
-        "minimax",
-        "ollama",
         "rules",
     ]
 
@@ -45,11 +40,8 @@ class NotReadyResponse(StrictModel):
     service: Literal["ai-service"] = "ai-service"
     mcp: Literal["disconnected"] = "disconnected"
     provider: Literal[
-        "hybrid",
         "nvidia",
-        "minimax",
         "rules",
-        "ollama",
     ]
     provider_status: Literal[
         "configured",
@@ -58,7 +50,5 @@ class NotReadyResponse(StrictModel):
     ]
     active_provider: Literal[
         "nvidia",
-        "minimax",
-        "ollama",
         "rules",
     ]

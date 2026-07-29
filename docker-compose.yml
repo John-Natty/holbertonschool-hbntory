@@ -129,29 +129,16 @@ services:
       CONVERSATION_TTL_SECONDS: ${CONVERSATION_TTL_SECONDS:-1800}
       CONVERSATION_MAX_TURNS: ${CONVERSATION_MAX_TURNS:-10}
       CONVERSATION_MAX_SESSIONS: ${CONVERSATION_MAX_SESSIONS:-1000}
-      AI_MODEL_PROVIDER: ${AI_MODEL_PROVIDER:-hybrid}
+      AI_MODEL_PROVIDER: ${AI_MODEL_PROVIDER:-nvidia}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
       NVIDIA_BASE_URL: ${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
       NVIDIA_MODEL: ${NVIDIA_MODEL:-minimaxai/minimax-m3}
-      NVIDIA_REQUEST_TIMEOUT_SECONDS: ${NVIDIA_REQUEST_TIMEOUT_SECONDS:-120}
+      NVIDIA_REQUEST_TIMEOUT_SECONDS: ${NVIDIA_REQUEST_TIMEOUT_SECONDS:-60}
       NVIDIA_CLASSIFICATION_MAX_TOKENS: ${NVIDIA_CLASSIFICATION_MAX_TOKENS:-600}
       NVIDIA_ANSWER_MAX_TOKENS: ${NVIDIA_ANSWER_MAX_TOKENS:-1000}
-      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
-      MINIMAX_BASE_URL: ${MINIMAX_BASE_URL:-https://api.minimax.io/v1}
-      MINIMAX_MODEL: ${MINIMAX_MODEL:-MiniMax-M3}
-      MINIMAX_REQUEST_TIMEOUT_SECONDS: ${MINIMAX_REQUEST_TIMEOUT_SECONDS:-60}
-      MINIMAX_CLASSIFICATION_MAX_TOKENS: ${MINIMAX_CLASSIFICATION_MAX_TOKENS:-600}
-      MINIMAX_ANSWER_MAX_TOKENS: ${MINIMAX_ANSWER_MAX_TOKENS:-1000}
-      OLLAMA_BASE_URL: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:latest}
-      OLLAMA_REQUEST_TIMEOUT_SECONDS: ${OLLAMA_REQUEST_TIMEOUT_SECONDS:-60}
-      OLLAMA_CLASSIFICATION_MAX_TOKENS: ${OLLAMA_CLASSIFICATION_MAX_TOKENS:-600}
-      OLLAMA_ANSWER_MAX_TOKENS: ${OLLAMA_ANSWER_MAX_TOKENS:-1000}
     depends_on:
       product-mcp-server:
         condition: service_started
-      ollama:
-        condition: service_healthy
     ports:
       - "${AI_SERVICE_HOST_PORT:-8001}:8001"
     healthcheck:
@@ -165,23 +152,6 @@ services:
           'http://localhost:8001/health', timeout=2).read()
       interval: 10s
       timeout: 3s
-      retries: 10
-      start_period: 10s
-    restart: unless-stopped
-
-  ollama:
-    image: ollama/ollama:latest
-    ports:
-      - "${OLLAMA_HOST_PORT:-11434}:11434"
-    volumes:
-      - ollama-data:/root/.ollama
-    healthcheck:
-      test:
-        - CMD
-        - ollama
-        - list
-      interval: 10s
-      timeout: 5s
       retries: 10
       start_period: 10s
     restart: unless-stopped
@@ -206,4 +176,3 @@ services:
 
 volumes:
   database_data:
-  ollama-data:

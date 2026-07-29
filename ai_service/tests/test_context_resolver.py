@@ -56,6 +56,19 @@ def test_branch_followup_preserves_previous_product(
     )
 
 
+def test_explicit_available_products_resolves_branch_without_model(
+    resolver: ContextResolver,
+) -> None:
+    """Ancre la formulation publique au nom de branche explicite."""
+
+    intent = resolver.resolve(
+        "Quels produits sont disponibles à Toulouse ?",
+        ConversationState(),
+    )
+
+    assert intent == StockByBranchIntent(branch_name="Toulouse")
+
+
 def test_branch_followup_preserves_stock_by_branch_intent(
     resolver: ContextResolver,
 ) -> None:

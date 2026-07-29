@@ -13,9 +13,9 @@ from app.errors import (
     IntentClassifierResponseError,
     IntentClassifierTimeoutError,
     IntentClassifierUnavailableError,
-    MiniMaxClientError,
-    MiniMaxResponseError,
-    MiniMaxTimeoutError,
+    NVIDIAClientError,
+    NVIDIAResponseError,
+    NVIDIATimeoutError,
 )
 from app.models.data import (
     BranchName,
@@ -167,7 +167,24 @@ class IntentClassifier:
                     state,
                     proposed=proposed,
                 )
-                return contextual or proposed
+                resolved = contextual or proposed
+
+                if isinstance(resolved, UnsupportedIntent):
+                    fallback = await self._fallback.resolve(question)
+                    fallback_context = self._resolve_context(
+                        question,
+                        state,
+                        proposed=fallback,
+                    )
+                    local_result = fallback_context or fallback
+
+                    if not isinstance(
+                        local_result,
+                        UnsupportedIntent,
+                    ):
+                        return local_result
+
+                return resolved
             except IntentClassifierError:
                 if contextual is not None:
                     return contextual
@@ -217,15 +234,15 @@ class IntentClassifier:
                 ],
                 max_tokens=self._max_tokens,
             )
-        except MiniMaxTimeoutError as error:
+        except NVIDIATimeoutError as error:
             raise IntentClassifierTimeoutError(
                 "Le délai du classifieur est dépassé."
             ) from error
-        except MiniMaxResponseError as error:
+        except NVIDIAResponseError as error:
             raise IntentClassifierResponseError(
                 "La réponse du classifieur est invalide."
             ) from error
-        except MiniMaxClientError as error:
+        except NVIDIAClientError as error:
             raise IntentClassifierUnavailableError(
                 "Le classifieur n'est pas disponible."
             ) from error
@@ -502,7 +519,7 @@ def _local_branch_reference(
         r"(?:\s+de)?\s+(?P<name>[a-z][a-z -]{0,99})$",
         r"\b(?:stock|reste)\s+(?:de|dans|a)\s+"
         r"(?P<name>[a-z][a-z -]{0,99})$",
-        r"\b(?:disponible|trouver)\s+(?:a|dans)\s+"
+        r"\b(?:disponibles?|trouver)\s+(?:a|dans)\s+"
         r"(?P<name>[a-z][a-z -]{0,99})$",
     )
 

@@ -8,18 +8,21 @@ from collections.abc import Sequence
 import pytest
 
 from app.errors import (
-    MiniMaxConnectionError,
-    MiniMaxResponseError,
-    MiniMaxTimeoutError,
+    NVIDIAConnectionError,
+    NVIDIAResponseError,
+    NVIDIATimeoutError,
 )
 from app.models.conversation import ConversationState, ConversationTurn
 from app.models.intents import (
     ProductDetailsIntent,
     ProductListIntent,
     QueryIntent,
+    ShoppingListIntent,
+    StockByBranchIntent,
     StockByProductIntent,
     UnsupportedIntent,
 )
+from app.models.mcp import ShoppingListItem
 from app.services.context_resolver import ContextResolver
 from app.services.intent_classifier import IntentClassifier
 
@@ -111,6 +114,45 @@ async def test_absent_model_uses_simple_fallback_with_zero_model_call() -> None:
     assert fallback.questions == ["Détails du produit 7."]
 
 
+async def test_explicit_available_products_is_anchored_before_model() -> None:
+    """La branche explicite reste déterministe malgré une sortie distante."""
+
+    client = RecordingCompletionClient(
+        '{"intent":"unsupported","reason":"ambiguous"}'
+    )
+    classifier = _classifier(client)
+
+    intent = await classifier.resolve(
+        "Quels produits sont disponibles à Toulouse ?",
+        ConversationState(),
+    )
+
+    assert intent == StockByBranchIntent(branch_name="Toulouse")
+    assert len(client.calls) == 1
+
+
+async def test_model_unsupported_uses_supported_local_shopping_intent() -> None:
+    """Une hésitation NVIDIA ne masque pas une liste locale explicite."""
+
+    client = RecordingCompletionClient(
+        '{"intent":"unsupported","reason":"ambiguous"}'
+    )
+    classifier = _classifier(client)
+
+    intent = await classifier.resolve(
+        "Quelle branche peut fournir deux produits 4 et un produit 8 ?",
+        ConversationState(),
+    )
+
+    assert intent == ShoppingListIntent(
+        items=[
+            ShoppingListItem(product_id=4, quantity=2),
+            ShoppingListItem(product_id=8, quantity=1),
+        ]
+    )
+    assert len(client.calls) == 1
+
+
 @pytest.mark.parametrize(
     ("question", "reason_code"),
     [
@@ -122,7 +164,7 @@ async def test_local_guards_skip_model_entirely(
     question: str,
     reason_code: str,
 ) -> None:
-    """Le hors domaine et les écritures sont terminaux avant MiniMax."""
+    """Le hors domaine et les écritures sont terminaux avant NVIDIA."""
 
     client = RecordingCompletionClient(
         '{"intent":"product_details","product_id":11}'
@@ -248,15 +290,17 @@ async def test_explicit_product_and_branch_survive_model_omission() -> None:
 
 
 @pytest.mark.parametrize(
-    ("question", "model_json"),
+    ("question", "model_json", "expected"),
     [
         (
             "Où est disponible le produit 11 ?",
             '{"intent":"stock_by_product","product_id":99}',
+            StockByProductIntent(product_id=11),
         ),
         (
             "Stock de la branche 3.",
             '{"intent":"stock_by_branch","branch_id":4}',
+            StockByBranchIntent(branch_id=3),
         ),
         (
             "Je cherche deux produits 4 et un produit 8.",
@@ -265,14 +309,21 @@ async def test_explicit_product_and_branch_survive_model_omission() -> None:
                 '{"product_id":4,"quantity":9},'
                 '{"product_id":8,"quantity":1}]}'
             ),
+            ShoppingListIntent(
+                items=[
+                    ShoppingListItem(product_id=4, quantity=2),
+                    ShoppingListItem(product_id=8, quantity=1),
+                ]
+            ),
         ),
     ],
 )
 async def test_python_anchor_rejects_invented_business_parameters(
     question: str,
     model_json: str,
+    expected: QueryIntent,
 ) -> None:
-    """Bloque IDs, branches et quantités qui contredisent la question."""
+    """Remplace les paramètres inventés par les valeurs locales ancrées."""
 
     client = RecordingCompletionClient(model_json)
     classifier = _classifier(client)
@@ -282,8 +333,7 @@ async def test_python_anchor_rejects_invented_business_parameters(
         ConversationState(),
     )
 
-    assert isinstance(intent, UnsupportedIntent)
-    assert intent.reason_code == "ambiguous"
+    assert intent == expected
     assert len(client.calls) == 1
 
 
@@ -477,9 +527,9 @@ async def test_prompt_bounds_history_and_redacts_every_untrusted_string() -> Non
 @pytest.mark.parametrize(
     "expected_error",
     [
-        MiniMaxTimeoutError("timeout"),
-        MiniMaxConnectionError("offline"),
-        MiniMaxResponseError("invalid response"),
+        NVIDIATimeoutError("timeout"),
+        NVIDIAConnectionError("offline"),
+        NVIDIAResponseError("invalid response"),
     ],
 )
 async def test_expected_model_failure_falls_back_to_simple_question(

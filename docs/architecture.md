@@ -2,18 +2,23 @@
 
 ## 1. Présentation
 
-HBntory est une plateforme de gestion de stock composée de plusieurs
-services indépendants.
+HBntory est une plateforme de gestion de stock multi-branches organisée en
+plusieurs services indépendants.
 
 Le système possède deux interfaces principales :
 
-- un Backoffice interne réservé aux employés authentifiés ;
-- un client web public permettant de poser des questions sur les produits
-  et leur disponibilité.
+- un Backoffice interne réservé aux utilisateurs authentifiés ;
+- un client web public permettant de consulter les produits et les stocks en
+  langage naturel.
 
-Le projet utilise une architecture multi-services afin de séparer les
-responsabilités liées aux utilisateurs, aux stocks, aux produits et à
-l’intelligence artificielle.
+L’architecture sépare clairement :
+
+- les utilisateurs et les autorisations ;
+- les données de stock ;
+- les informations descriptives des produits ;
+- l’accès contrôlé aux données par MCP ;
+- le traitement des questions par le service IA ;
+- l’interface publique.
 
 ---
 
@@ -21,71 +26,76 @@ l’intelligence artificielle.
 
 L’architecture doit permettre de :
 
-- gérer les utilisateurs et les branches ;
+- gérer les utilisateurs internes et leur branche ;
 - sécuriser l’accès au Backoffice ;
-- gérer les quantités de stock ;
-- consulter les produits depuis une API externe ;
-- fournir des outils MCP à un agent IA ;
+- consulter, ajouter et retirer du stock ;
+- obtenir les informations Produit depuis l’API externe ;
+- exposer des outils MCP strictement contrôlés ;
 - répondre à des questions en langage naturel ;
-- conserver des frontières claires entre les services ;
-- lancer le système avec Docker Compose.
+- empêcher l’IA d’accéder directement à PostgreSQL ;
+- conserver des frontières réseau claires entre les services ;
+- lancer l’ensemble du système avec Docker Compose.
 
 ---
 
-## 3. Principes principaux
+## 3. Principes d’architecture
 
 ### 3.1 Séparation des responsabilités
 
-Chaque composant possède une responsabilité précise.
+Chaque composant possède une responsabilité précise :
 
-Le Backoffice ne contient pas la logique de l’agent IA.
+- le Backoffice gère les utilisateurs, les rôles et les stocks ;
+- PostgreSQL stocke uniquement les données locales ;
+- l’API Produit fournit les informations descriptives des produits ;
+- le serveur MCP expose des outils de lecture contrôlés ;
+- le service IA comprend les questions et orchestre les appels MCP ;
+- le client web public communique uniquement avec le service IA.
 
-Le service AI Query ne gère pas directement les utilisateurs ou les
-stocks.
-
-Le serveur MCP fournit uniquement des outils contrôlés permettant à
-l’agent de consulter les données nécessaires.
+Les services ne réalisent aucun import direct depuis le code métier d’un autre
+service. Ils communiquent par HTTP, REST ou MCP.
 
 ### 3.2 Source unique des produits
 
-L’API Produit externe est la source officielle des données produit.
+L’API Produit externe est la source de vérité pour les informations Produit.
 
-La base de données HBntory ne stocke jamais :
+PostgreSQL ne stocke jamais :
 
 - le nom d’un produit ;
 - sa description ;
 - son prix ;
+- son image ;
 - sa catégorie ;
 - sa marque ;
 - son fournisseur ;
-- son image ;
 - ses métadonnées.
 
-La base locale conserve uniquement l’identifiant externe du produit dans
-les lignes de stock.
+La base locale conserve uniquement l’identifiant externe nécessaire pour
+associer une quantité de stock à un produit.
 
-### 3.3 Contrôle des autorisations côté backend
+### 3.3 Autorisations contrôlées par le backend
 
-Les autorisations sont toujours vérifiées par le Backoffice.
+Les autorisations sont toujours vérifiées côté serveur.
 
-Cacher un bouton dans l’interface ne constitue pas une protection
-suffisante.
+Masquer un bouton dans l’interface ne constitue pas une protection suffisante.
 
-Le backend vérifie notamment :
+Le Backoffice vérifie notamment :
 
-- que l’utilisateur est connecté ;
+- que l’utilisateur est authentifié ;
 - que son compte est actif ;
 - que son rôle autorise l’action ;
-- qu’un common user agit uniquement sur sa branche.
+- qu’un common user agit uniquement sur sa branche ;
+- qu’un administrateur n’effectue aucune opération de stock.
 
-### 3.4 Aucun accès direct de l’agent à PostgreSQL
+### 3.4 Aucun accès direct de l’IA à PostgreSQL
 
-L’agent IA ne peut pas exécuter de requêtes SQL libres.
+Le service IA n’exécute aucune requête SQL et n’accède directement ni au
+Backoffice, ni à PostgreSQL, ni à l’API Produit.
 
-Il utilise uniquement les outils exposés par le serveur MCP.
+Toutes les données métier utilisées par le service IA passent par le serveur
+MCP.
 
-Pour les stocks, le MCP communique avec une API interne en lecture seule
-exposée par le Backoffice.
+Pour les stocks, le MCP appelle une API interne en lecture seule exposée par le
+Backoffice.
 
 ---
 
@@ -93,22 +103,34 @@ exposée par le Backoffice.
 
 ### 4.1 Backoffice
 
-Le Backoffice est une application Flask utilisant un rendu côté serveur
-avec Jinja2.
+Le Backoffice est une application Flask utilisant principalement un rendu côté
+serveur avec Jinja2.
 
-Il est responsable de :
+Du JavaScript est utilisé pour certaines interactions, notamment les mouvements
+de stock, mais Flask reste l’autorité unique pour :
 
 - l’authentification ;
-- la gestion des sessions ;
-- la gestion des utilisateurs ;
-- la gestion des branches ;
-- la gestion des stocks ;
-- la vérification des rôles ;
-- la vérification des branches ;
-- l’accès à PostgreSQL avec SQLAlchemy ;
-- l’exposition d’une API interne de consultation des stocks.
+- les sessions ;
+- la protection CSRF ;
+- les autorisations ;
+- la validation métier ;
+- les transactions ;
+- l’accès à PostgreSQL avec SQLAlchemy.
 
-Deux rôles sont disponibles :
+Le Backoffice est responsable :
+
+- de la connexion et de la déconnexion ;
+- de la gestion des common users ;
+- de leur affectation à une branche ;
+- de leur désactivation et de leur réactivation ;
+- de la consultation du stock ;
+- de l’ajout et du retrait du stock ;
+- de la validation des produits auprès de l’API Produit ;
+- de l’exposition d’une API interne de consultation des stocks.
+
+Le Backoffice ne fournit pas de CRUD complet pour les branches. Les branches
+sont initialisées par le système et utilisées pour l’affectation des
+utilisateurs et des stocks.
 
 #### Administrateur
 
@@ -116,41 +138,28 @@ L’administrateur peut :
 
 - lister les common users ;
 - créer un common user ;
-- modifier la branche assignée à un common user ;
-- modifier le mot de passe d’un common user ;
-- désactiver le compte d’un common user avec un soft-delete.
+- modifier son mot de passe ;
+- modifier sa branche ;
+- désactiver ou réactiver son compte.
 
 L’administrateur ne peut pas gérer les stocks.
 
 #### Common user
 
-Un common user appartient à une seule branche.
+Un common user appartient exactement à une branche.
 
 Il peut uniquement :
 
 - consulter le stock de sa branche ;
 - ajouter du stock dans sa branche ;
 - retirer du stock dans sa branche ;
-- consulter la quantité d’un produit dans sa branche.
+- consulter la quantité disponible pour un produit de sa branche.
 
 Il ne peut pas gérer les utilisateurs ni agir sur une autre branche.
-
----
 
 ### 4.2 Base de données PostgreSQL
 
 PostgreSQL stocke uniquement les données internes de HBntory.
-
-Les principales entités sont :
-
-- `User` ;
-- `Branch` ;
-- `Stock`.
-
-SQLAlchemy est utilisé comme ORM pour définir les modèles, les relations
-et les contraintes.
-
-La base contient notamment :
 
 ```text
 User
@@ -174,51 +183,67 @@ Stock
 
 Les règles principales sont :
 
-- une quantité de stock ne peut pas être négative ;
-- la combinaison `branch_id` et `product_id` doit être unique ;
+- les rôles autorisés sont `admin` et `common` ;
+- un administrateur ne possède aucune branche ;
 - un common user doit appartenir à une branche ;
 - un utilisateur désactivé reste présent dans la base ;
-- aucune donnée descriptive de produit n’est enregistrée localement.
+- une quantité de stock ne peut pas être négative ;
+- la combinaison `(branch_id, product_id)` est unique ;
+- les noms d’utilisateur et de branche sont uniques sans tenir compte de la
+  casse ;
+- aucune information descriptive de produit n’est enregistrée localement.
 
----
+SQLAlchemy définit les modèles et les relations. Les migrations créent les
+contraintes SQL nécessaires.
 
 ### 4.3 API Produit externe
 
-L’API Produit est une dépendance externe en lecture seule.
+L’API Produit est une dépendance en lecture seule.
 
-Elle fournit les données descriptives des produits, par exemple :
+Elle fournit notamment :
 
-- identifiant ;
-- SKU ;
-- nom ;
-- description ;
-- catégorie ;
-- prix ;
-- fournisseur ;
-- état du produit.
+- l’identifiant ;
+- le SKU ;
+- le nom ;
+- la description ;
+- la catégorie ;
+- la marque ;
+- le fournisseur ;
+- le prix ;
+- la devise ;
+- l’état du produit.
 
 Le Backoffice et le serveur MCP communiquent avec cette API par HTTP.
 
-Le système doit gérer :
+Les clients doivent gérer :
 
-- les produits inexistants ;
+- les produits inconnus ;
 - les erreurs HTTP ;
-- les délais de réponse ;
+- les délais d’attente ;
 - l’indisponibilité du service ;
-- les réponses inattendues.
-
----
+- les réponses mal formées ou inattendues.
 
 ### 4.4 Serveur MCP
 
-Le serveur MCP sert de pont entre l’agent IA et les sources de données.
+Le serveur MCP sert de frontière contrôlée entre le service IA et les sources
+de données.
 
-Il fournit deux catégories d’outils.
+Il utilise FastMCP avec un transport Streamable HTTP sur la route `/mcp`.
 
-#### Outils produits
+Il expose exactement cinq outils en lecture seule :
 
 ```text
-list_products()
+list_products
+get_product_details
+get_stock_by_product
+get_stock_by_branch
+check_shopping_list
+```
+
+#### Outils Produit
+
+```text
+list_products(limit, offset)
 get_product_details(product_id)
 ```
 
@@ -234,87 +259,153 @@ check_shopping_list(items)
 
 Ces outils interrogent l’API interne du Backoffice.
 
-`get_stock_by_branch` reste un seul outil parmi les cinq. Il exige exactement
-une référence : un `branch_id` strictement positif ou un `branch_name` non
-vide. Dans le second cas, le MCP appelle
-`GET /internal/stocks/branches/by-name?name=...` avec
-`X-Internal-API-Key`. Le Backoffice normalise les espaces, compare le nom exact
-sans tenir compte de la casse et retourne le nom métier réellement stocké.
-La route existante `GET /internal/stocks/branches/<branch_id>` reste inchangée.
+`get_stock_by_branch` accepte exactement une référence :
 
-Pour `get_stock_by_branch`, les identifiants et quantités proviennent du
-Backoffice. Le MCP consulte ensuite l’API Produit externe avec les
-`product_id` reçus et ajoute le `product_name`, le `unit_price` et la
-`currency` officiels à chaque ligne. Cette agrégation reste interne au même
-outil : le service IA effectue toujours un seul appel MCP métier et ne
-contacte directement aucun des deux services. La réponse publique peut ainsi
-présenter, pour chaque ligne de stock, le numéro du produit, sa quantité
-locale, son nom et son prix unitaire sans confondre le stock d'une branche
-avec le catalogue général.
+- un `branch_id` strictement positif ;
+- ou un `branch_name` non vide.
+
+Lorsqu’un nom est fourni, le MCP utilise :
+
+```http
+GET /internal/stocks/branches/by-name?name=...
+```
+
+Pour enrichir le stock d’une branche, les identifiants et les quantités viennent
+du Backoffice, puis le MCP récupère les noms et les prix officiels auprès de
+l’API Produit.
+
+Cette agrégation reste interne au même outil. Le service IA réalise toujours au
+maximum un appel MCP métier par question.
 
 Le serveur MCP :
 
-- valide les paramètres reçus ;
-- appelle le service approprié ;
-- transforme les réponses ;
-- gère les erreurs ;
-- retourne des données structurées à l’agent.
+- valide strictement les paramètres ;
+- rejette les champs inconnus ;
+- utilise des clients HTTP partagés ;
+- applique des délais d’attente ;
+- transforme les erreurs en réponses structurées ;
+- ne se connecte jamais directement à PostgreSQL ;
+- ne peut effectuer aucune écriture de stock.
 
----
+### 4.5 Service IA
 
-### 4.5 Service AI Query
+Le service IA est une application FastAPI indépendante du Backoffice.
 
-Le service AI Query est indépendant du Backoffice.
+Il est responsable :
 
-Il est responsable de :
+- de recevoir les questions du client public ;
+- de comprendre l’intention de l’utilisateur ;
+- de résoudre les références conversationnelles autorisées ;
+- de valider les paramètres avec Pydantic ;
+- de sélectionner zéro ou un outil MCP ;
+- de valider les données retournées par MCP ;
+- de produire une réponse naturelle ;
+- de refuser les demandes hors périmètre ou les demandes d’écriture ;
+- de ne jamais inventer une donnée absente.
 
-- recevoir les questions du client public ;
-- comprendre l’intention de l’utilisateur ;
-- choisir les outils MCP nécessaires ;
-- utiliser les résultats des outils ;
-- générer une réponse compréhensible ;
-- refuser d’inventer une information manquante.
+Les intentions prises en charge sont :
 
-Le service doit répondre au minimum aux questions suivantes :
+- `product_list` ;
+- `product_details` ;
+- `stock_by_product` ;
+- `stock_by_branch` ;
+- `shopping_list` ;
+- `unsupported`.
 
-- obtenir les détails d’un produit ;
-- trouver les branches possédant un produit ;
-- lister les produits disponibles dans une branche ;
-- trouver les branches capables de satisfaire une liste d’achats.
+#### Fournisseur IA
 
-Lorsque les outils ne fournissent pas suffisamment d’informations,
-le service doit le signaler clairement.
+Deux modes sont acceptés :
 
-Chaque requête `POST /api/query` effectue au maximum un appel MCP métier.
-L'appel accepte un `conversation_id` facultatif. Le premier tour crée un
-identifiant opaque ; les tours suivants utilisent une mémoire en RAM bornée
-pour résoudre des références telles que `le deuxième`, `celui-ci`, `cette
-branche` ou `et à Toulouse ?`. Le résolveur ne peut sélectionner qu'un produit
-ou une branche réellement présents dans l'état de la conversation.
+```text
+nvidia
+rules
+```
 
-Lorsque `AI_MODEL_PROVIDER=minimax`, MiniMax-M3 peut effectuer au maximum une
-classification contextuelle puis une rédaction par message. Ses sorties
-structurées et leurs relations factuelles sont validées par Pydantic et par le
-code Python. Aucun modèle ne fait de tool calling : l'orchestrateur Python
-choisit seul l'outil MCP. Un fallback local minimal comprend les demandes
-simples et `AnswerBuilder` construit la réponse si le fournisseur est absent
-ou invalide.
+En mode `nvidia`, MiniMax-M3 est utilisé via l’API NVIDIA pour :
 
-Les fournisseurs IA ne reçoivent jamais de clé interne, URL de service,
-en-tête, requête SQL, trace brute, objet MCP ou réponse MCP brute. Ils
-reçoivent uniquement une histoire récente bornée, un état conversationnel
-réduit et les faits strictement nécessaires à la rédaction. Les messages
-historiques restent des données non fiables, séparées des instructions
-système.
-`GET /health` décrit uniquement le processus HTTP. `GET /ready` vérifie la
-session MCP et déclenche une reconnexion bornée lorsque celle-ci a été perdue.
-Il expose également le mode demandé, l'état configuré et le fournisseur
-réellement sélectionné dans `active_provider`, sans l'appeler.
-Le service IA démarre en mode dégradé si MCP est absent et récupère après son
-retour sans redémarrage manuel. Les erreurs de validation HTTP 422 utilisent
-le même contrat structuré que les autres erreurs publiques.
+1. classifier la question ;
+2. rédiger une réponse naturelle à partir des faits validés.
 
----
+Le service effectue au maximum :
+
+- deux appels NVIDIA par message ;
+- un appel MCP métier par message.
+
+Le modèle ne réalise aucun tool calling. L’orchestrateur Python choisit seul
+l’outil MCP et ses arguments.
+
+En mode `rules`, ou lorsque la clé NVIDIA est absente ou que le fournisseur est
+indisponible :
+
+- les règles locales comprennent les demandes simples ;
+- `AnswerBuilder` produit une réponse déterministe.
+
+#### Contrôle factuel
+
+Les réponses générées sont contrôlées avant d’être envoyées au client.
+
+Le système vérifie notamment les relations suivantes :
+
+- produit et prix ;
+- produit et devise ;
+- produit et branche ;
+- branche et quantité ;
+- disponibilité et quantité ;
+- résultat d’une liste d’achats.
+
+Une réponse invalide ou contradictoire est remplacée par la réponse déterministe
+d’`AnswerBuilder`.
+
+#### Conversation multi-tour
+
+La conversation multi-tour est une fonctionnalité optionnelle ajoutée au-delà
+du minimum demandé.
+
+`POST /api/query` accepte un `conversation_id` facultatif.
+
+Le service conserve en RAM un état limité contenant notamment :
+
+- le dernier intent ;
+- le dernier produit ;
+- la dernière branche ;
+- la dernière liste de produits ;
+- la dernière liste d’achats ;
+- un historique réduit.
+
+La mémoire :
+
+- est séparée par conversation ;
+- expire après une durée d’inactivité ;
+- est limitée en nombre de tours et de sessions ;
+- disparaît au redémarrage ;
+- n’est pas une mémoire utilisateur persistante.
+
+Elle permet de comprendre des formulations telles que :
+
+```text
+Et à Toulouse ?
+Le deuxième.
+Où puis-je le trouver ?
+Cette branche.
+```
+
+#### Routes publiques
+
+```http
+GET /health
+GET /ready
+GET /api/products
+POST /api/query
+```
+
+`GET /api/products` appelle directement l’outil MCP `list_products` et ne fait
+aucun appel NVIDIA.
+
+`GET /health` vérifie que le processus HTTP fonctionne.
+
+`GET /ready` vérifie la connexion MCP et expose le fournisseur demandé, son
+statut de configuration et le fournisseur réellement actif. Cette route ne
+réalise pas un appel de génération au fournisseur.
 
 ### 4.6 Client web public
 
@@ -326,20 +417,25 @@ Il contient :
 - un bouton d’envoi ;
 - un indicateur de chargement ;
 - une zone de réponse ;
-- une gestion simple des erreurs.
+- une gestion des erreurs ;
+- un catalogue de produits.
 
-Il communique avec le service AI Query par REST. Il conserve uniquement
-l'identifiant opaque retourné par `POST /api/query` et le renvoie avec la
-question suivante.
-En développement, son origine `http://localhost:8080` est explicitement
-autorisée par la politique CORS du service IA.
+Il communique uniquement avec le service IA :
 
-L'historique métier reste dans la mémoire volatile du service IA. Il est
-séparé par conversation, limité à dix tours, expire après trente minutes
-d'inactivité et disparaît au redémarrage. Il ne constitue ni un compte
-utilisateur, ni une mémoire persistante. Un identifiant absent de la mémoire
-ou expiré est remplacé par un nouvel identifiant généré par le serveur afin
-d'éviter qu'un client puisse imposer une session.
+```http
+GET /api/products
+POST /api/query
+```
+
+Le client conserve uniquement le `conversation_id` dans `sessionStorage`.
+
+Il ne contacte jamais directement :
+
+- PostgreSQL ;
+- le Backoffice ;
+- l’API interne ;
+- le serveur MCP ;
+- l’API Produit.
 
 ---
 
@@ -349,52 +445,53 @@ d'éviter qu'un client puisse imposer une session.
 flowchart TB
     PublicUser[Utilisateur public]
     Client[Client web public]
-    AIService[AI Query Service]
-    Model[MiniMax-M3 ou fallback local]
+    AIService[Service IA FastAPI]
+    Provider[MiniMax-M3 via NVIDIA]
+    Rules[Rules + AnswerBuilder]
     Memory[Mémoire conversationnelle RAM]
     MCP[Serveur MCP]
 
-    Employee[Employé]
-    Backoffice[Backoffice Flask + Jinja2]
+    Employee[Utilisateur interne]
+    Backoffice[Backoffice Flask + Jinja2 + JavaScript]
     ORM[SQLAlchemy]
     Database[(PostgreSQL)]
 
     ProductAPI[API Produit externe]
 
     PublicUser --> Client
-    Client -->|POST /api/query + conversation_id| AIService
-    AIService -->|État réduit borné| Memory
-    AIService -->|Classification et rédaction validées| Model
-    AIService -->|Au plus un appel MCP métier| MCP
+    Client -->|REST| AIService
 
-    MCP -->|Outils produits| ProductAPI
-    MCP -->|HTTP /internal/stocks/*| Backoffice
+    AIService <--> Memory
+    AIService -->|Classification et rédaction| Provider
+    AIService -->|Fallback local| Rules
+    AIService -->|0 ou 1 appel MCP métier| MCP
+
+    MCP -->|Outils Produit| ProductAPI
+    MCP -->|API interne en lecture seule| Backoffice
 
     Employee --> Backoffice
     Backoffice --> ORM
     ORM --> Database
-
-    Backoffice -->|Validation des produits| ProductAPI
+    Backoffice -->|Validation et affichage Produit| ProductAPI
 ```
 
 ---
 
 ## 6. Propriété des données
 
-| Donnée | Service responsable |
+| Donnée | Source de vérité |
 |---|---|
 | Utilisateurs | Backoffice / PostgreSQL |
 | Rôles | Backoffice / PostgreSQL |
 | Branches | Backoffice / PostgreSQL |
 | Quantités de stock | Backoffice / PostgreSQL |
-| Identifiants produit associés au stock | Backoffice / PostgreSQL |
-| Nom et description des produits | API Produit externe |
-| Prix et catégorie des produits | API Produit externe |
-| Questions publiques | AI Query Service |
-| Réponses publiques | AI Query Service |
+| Identifiants Produit associés au stock | Backoffice / PostgreSQL |
+| Noms, descriptions et images Produit | API Produit externe |
+| Prix, devises et métadonnées Produit | API Produit externe |
+| Conversations courtes | Service IA, mémoire RAM volatile |
 
-Le service AI Query et le serveur MCP ne deviennent jamais propriétaires
-des données produit ou des données de stock.
+Le service IA et le serveur MCP ne deviennent jamais propriétaires des données
+Produit ou des stocks.
 
 ---
 
@@ -402,17 +499,14 @@ des données produit ou des données de stock.
 
 | Source | Destination | Protocole | Utilité |
 |---|---|---|---|
-| Navigateur interne | Backoffice | HTTP | Pages et formulaires |
+| Navigateur interne | Backoffice | HTTP | Pages, formulaires et mouvements de stock |
 | Backoffice | PostgreSQL | SQLAlchemy | Données internes |
-| Backoffice | API Produit | HTTP | Validation et affichage des produits |
-| Client public | AI Query Service | REST | Questions publiques |
-| AI Query Service | MiniMax-M3 ou fallback local | HTTPS ou local | Compréhension contextuelle et rédaction validée |
-| AI Query Service | Serveur MCP | MCP | Appel des outils |
-| Serveur MCP | API Produit | HTTP | Informations produit |
+| Backoffice | API Produit | HTTP | Validation et affichage Produit |
+| Client public | Service IA | REST | Catalogue et questions |
+| Service IA | NVIDIA | HTTPS | Classification et rédaction |
+| Service IA | Serveur MCP | MCP Streamable HTTP | Appel des outils |
+| Serveur MCP | API Produit | HTTP | Informations Produit |
 | Serveur MCP | API interne Backoffice | HTTP | Informations de stock |
-
-Les services ne réalisent aucun import direct depuis le code d’un autre
-service.
 
 ---
 
@@ -433,87 +527,52 @@ service.
 ### 8.2 Ajout de stock
 
 ```text
-1. Le common user ouvre le formulaire de stock.
-2. Le Backoffice vérifie sa session.
-3. Le Backoffice vérifie son rôle.
-4. La branche est obtenue depuis le compte connecté.
-5. Le produit est vérifié avec l’API Produit.
-6. La quantité est validée.
-7. SQLAlchemy met à jour le stock.
-8. La page mise à jour est affichée.
+1. Le common user ouvre la page de sa branche.
+2. Le Backoffice vérifie la session, le rôle et la branche.
+3. Le produit est validé auprès de l’API Produit.
+4. La quantité est validée comme entier strictement positif.
+5. Le service métier crée ou incrémente la ligne de stock.
+6. La transaction est validée.
+7. L’interface affiche le nouveau stock.
 ```
 
 ### 8.3 Retrait de stock
 
-Le retrait est refusé lorsque :
+```text
+1. Le common user demande un retrait.
+2. Flask vérifie la session, le rôle, la branche et le jeton CSRF.
+3. La quantité est validée.
+4. Une mise à jour SQL conditionnelle vérifie que le stock est suffisant.
+5. La quantité est diminuée uniquement si la condition est satisfaite.
+6. La transaction est annulée si le stock est insuffisant.
+```
 
-- la quantité demandée est inférieure ou égale à zéro ;
-- la quantité n’est pas un entier ;
-- le produit n’existe pas ;
-- le stock disponible est insuffisant ;
-- l’utilisateur tente d’agir sur une autre branche.
+Le retrait conditionnel empêche deux retraits simultanés de rendre le stock
+négatif.
 
 ---
 
 ## 9. Parcours public
 
-Exemple de question :
+Exemple :
 
 ```text
-Dans quelle branche le produit 12 est-il disponible ?
+Dans quelle branche le produit 11 est-il disponible ?
 ```
 
 Parcours :
 
 ```text
-1. Le client web envoie la question avec `POST /api/query` et, si disponible,
-   le `conversation_id` précédent.
-2. Le service ouvre l'état RAM de cette conversation sous verrou.
-3. Le résolveur puis le classifieur produisent une intention Pydantic valide.
-4. L’orchestrateur appelle uniquement `get_stock_by_product`.
-5. Le MCP interroge l’API interne du Backoffice.
-6. Le Backoffice consulte PostgreSQL.
-7. Le résultat validé est retourné au service IA.
-8. Le générateur rédige depuis les faits nettoyés et les relations déclarées
-   sont vérifiées ; `AnswerBuilder` prend le relais en cas d'échec.
-9. Le service enregistre seulement un état réduit puis retourne la réponse et
-   le même `conversation_id`.
-10. Le client web affiche la réponse.
-```
-
-Diagramme :
-
-```mermaid
-sequenceDiagram
-    actor User as Utilisateur public
-    participant Client as Client web
-    participant AI as AI Query Service
-    participant Memory as Mémoire RAM bornée
-    participant Model as Fournisseur IA sélectionné
-    participant MCP as Serveur MCP
-    participant Backoffice as API interne Backoffice
-    participant DB as PostgreSQL
-
-    User->>Client: Pose une question
-    Client->>AI: POST /api/query + conversation_id facultatif
-    AI->>Memory: Ouvre l'état réduit sous verrou
-    opt Fournisseur configuré et garde locale non terminale
-        AI->>Model: Question, historique borné et état réduit
-        Model-->>AI: Intention JSON stricte
-    end
-    AI->>MCP: get_stock_by_product
-    MCP->>Backoffice: Requête de stock
-    Backoffice->>DB: Requête SQLAlchemy
-    DB-->>Backoffice: Quantités disponibles
-    Backoffice-->>MCP: Réponse structurée
-    MCP-->>AI: Résultat validé
-    opt Fournisseur configuré
-        AI->>Model: Claims métier validés et contexte borné
-        Model-->>AI: Segments et claims JSON stricts
-    end
-    AI->>Memory: Enregistre un résumé et libère le verrou
-    AI-->>Client: Réponse JSON + conversation_id
-    Client-->>User: Affichage de la réponse
+1. Le client envoie la question à POST /api/query.
+2. Le service IA ouvre ou crée l’état conversationnel.
+3. Le classifieur produit une intention strictement validée.
+4. L’orchestrateur sélectionne get_stock_by_product.
+5. Le serveur MCP appelle l’API interne du Backoffice.
+6. Le Backoffice consulte PostgreSQL avec SQLAlchemy.
+7. Les données structurées remontent jusqu’au service IA.
+8. NVIDIA rédige une réponse naturelle lorsque le fournisseur est disponible.
+9. Le contrôle factuel accepte la réponse ou utilise AnswerBuilder.
+10. Le service retourne la réponse et le conversation_id.
 ```
 
 ---
@@ -524,7 +583,7 @@ sequenceDiagram
 
 Les mots de passe sont hachés avec bcrypt.
 
-La base ne stocke jamais les mots de passe en clair.
+Aucun mot de passe en clair n’est stocké dans PostgreSQL.
 
 ### 10.2 Sessions
 
@@ -535,82 +594,106 @@ Flask-Login gère :
 - l’utilisateur courant ;
 - la protection des routes.
 
-La clé secrète Flask est fournie par une variable d’environnement.
+La clé secrète Flask est fournie par variable d’environnement.
 
-### 10.3 Autorisations
+### 10.3 Protection CSRF
 
-Les autorisations sont vérifiées côté serveur.
+La protection CSRF est active sur les formulaires et les requêtes navigateur
+qui modifient des données.
 
-Chaque requête protégée vérifie :
+Les routes internes utilisées par le MCP ne reposent pas sur une session
+navigateur. Elles sont protégées par `X-Internal-API-Key`.
 
-- la session ;
-- le statut actif ;
-- le rôle ;
-- la branche lorsque cela est nécessaire.
+### 10.4 API interne
 
-### 10.4 Variables d’environnement
+Le Backoffice compare la clé reçue avec `INTERNAL_API_KEY` à l’aide d’une
+comparaison sécurisée.
 
-Le fichier `.env` contient les valeurs locales et les secrets.
+Une clé absente ou invalide entraîne une réponse `401 Unauthorized`.
 
-Il n’est jamais versionné.
+### 10.5 Secrets
 
-Le fichier `.env.example` contient uniquement les noms des variables et
-des valeurs fictives.
+Le fichier `.env` contient les secrets locaux et n’est pas versionné.
 
-### 10.5 Protection CSRF
+`.env.example` contient uniquement des valeurs fictives.
 
-Les formulaires du Backoffice qui modifient des données seront protégés
-contre les attaques CSRF.
-
-Chaque formulaire d’ajout, de retrait ou de modification contiendra un
-jeton CSRF vérifié côté serveur.
-
-Cette protection pourra être mise en œuvre avec Flask-WTF ou
-`CSRFProtect`.
-
-Les endpoints de l’API interne n’utiliseront pas les sessions du
-navigateur. Ils seront protégés par la clé interne transmise dans
-l’en-tête `X-Internal-API-Key`.
+Aucune clé NVIDIA, clé interne, URL privée ou donnée de connexion n’est envoyée
+au MCP, au client public ou dans les réponses REST.
 
 ---
 
-## 11. Déploiement local
+## 11. API interne de consultation des stocks
 
-Le projet est organisé en monorepo multi-services.
+Le Backoffice expose quatre routes internes en lecture seule.
 
-Docker Compose permettra de lancer les principaux composants :
+| Méthode | Route | Rôle |
+|---|---|---|
+| `GET` | `/internal/stocks/products/<product_id>` | Stock d’un produit dans les branches |
+| `GET` | `/internal/stocks/branches/<branch_id>` | Stock d’une branche par identifiant |
+| `GET` | `/internal/stocks/branches/by-name?name=...` | Stock d’une branche par nom |
+| `POST` | `/internal/stocks/check-shopping-list` | Branches satisfaisant une liste |
+
+Ces routes retournent uniquement :
+
+- les identifiants Produit ;
+- les branches ;
+- les quantités ;
+- les informations nécessaires à la vérification d’une liste.
+
+Elles ne retournent aucune fiche Produit descriptive.
+
+### Codes principaux
+
+| Statut HTTP | Utilisation |
+|---|---|
+| `200 OK` | Réponse réussie, y compris une liste vide |
+| `400 Bad Request` | Paramètre ou corps invalide |
+| `401 Unauthorized` | Clé interne absente ou invalide |
+| `404 Not Found` | Branche inexistante |
+| `409 Conflict` | Nom de branche ambigu |
+| `500 Internal Server Error` | Erreur interne ou base indisponible |
+
+Une absence de stock n’est pas une erreur. Elle retourne une liste vide avec
+`200 OK`.
+
+---
+
+## 12. Déploiement local
+
+Le projet utilise Docker Compose avec six services :
 
 ```text
 docker-compose.yml
-├── PostgreSQL
-├── Backoffice
-├── API Produit externe
-├── Serveur MCP
-├── AI Query Service
-└── Client web public
+├── external-products-api
+├── database
+├── backoffice
+├── product-mcp-server
+├── ai-service
+└── client-web
 ```
 
-Chaque service possède :
+MiniMax-M3 est fourni par l’API NVIDIA et ne nécessite aucun conteneur local.
 
-- son propre dossier ;
-- ses propres dépendances ;
-- ses propres tests ;
-- son propre Dockerfile.
+Un fichier `docker-compose.test.yml` fournit un environnement PostgreSQL isolé
+pour les tests du Backoffice.
 
 ---
 
-## 12. Structure du dépôt
+## 13. Structure du dépôt
 
 ```text
-hbntory/
+holbertonschool-hbntory/
 ├── backoffice/
 ├── product_mcp_server/
 ├── ai_service/
 ├── client_web/
 ├── docs/
+│   ├── adr/
 │   ├── architecture.md
-│   └── adr/
+│   ├── authentication.md
+│   └── mvp.md
 ├── docker-compose.yml
+├── docker-compose.test.yml
 ├── .env.example
 ├── .gitignore
 └── README.md
@@ -618,20 +701,18 @@ hbntory/
 
 ---
 
-## 13. Produit minimum viable
-
-Le MVP doit inclure :
+## 14. Périmètre du MVP
 
 ### Backoffice
 
-- connexion et déconnexion ;
+- authentification et déconnexion ;
 - administrateur initial ;
-- création et modification des common users ;
-- attribution d’une branche ;
+- gestion des common users ;
+- affectation à une branche ;
 - soft-delete ;
 - consultation du stock ;
 - ajout et retrait du stock ;
-- contrôle des rôles côté backend.
+- autorisations contrôlées côté backend.
 
 ### Serveur MCP
 
@@ -641,259 +722,68 @@ Le MVP doit inclure :
 - consultation des stocks par branche ;
 - vérification d’une liste d’achats.
 
-### Service AI Query
+### Service IA
 
 - détails d’un produit ;
 - branches possédant un produit ;
 - produits disponibles dans une branche ;
 - vérification d’une liste d’achats ;
-- conversation multi-tour volatile et bornée ;
-- refus d’inventer des informations absentes.
+- réponses fondées sur les données réelles ;
+- refus clair lorsque l’information est indisponible ;
+- endpoint REST destiné au client public.
 
 ### Client web
 
+- accès sans authentification ;
 - saisie d’une question ;
 - envoi REST ;
-- affichage du chargement ;
+- état de chargement ;
 - affichage de la réponse ;
 - gestion des erreurs.
 
 ---
 
-## 14. Fonctionnalités hors MVP
+## 15. Fonctionnalités optionnelles implémentées
 
-Les fonctionnalités suivantes ne sont pas prioritaires :
+Les fonctionnalités suivantes vont au-delà du minimum obligatoire :
 
-- historique persistant ou synchronisé entre plusieurs instances ;
-- streaming des réponses ;
+- conversation multi-tour volatile ;
+- résolution de pronoms et d’ordinaux ;
+- catalogue public sous forme de cartes ;
+- MiniMax-M3 via NVIDIA avec fallback local ;
+- contrôle factuel structuré ;
+- prise en charge d’un nom de branche dans l’outil MCP ;
+- route publique structurée `GET /api/products`.
+
+Ne sont pas implémentés :
+
+- historique persistant ;
+- mémoire partagée entre plusieurs instances ;
+- streaming ;
 - WebSocket ;
 - notifications ;
 - statistiques avancées ;
-- plusieurs administrateurs ;
-- interface graphique complexe ;
 - modification des produits externes.
 
 ---
 
-## 15. Références aux ADR
+## 16. Limites et compromis
 
-Les décisions détaillées sont documentées dans :
-
-- `ADR 0001` : REST pour le client public ;
-- `ADR 0002` : rendu côté serveur pour le Backoffice ;
-- `ADR 0003` : serveur MCP personnalisé pour les stocks ;
-- `ADR 0004` : bcrypt et sessions Flask ;
-- `ADR 0005` : monorepo multi-services.
-
----
-
-## 16. Stratégie de retrait atomique du stock
-
-Les retraits de stock sont exécutés dans une transaction.
-
-La mise à jour est appliquée uniquement si la quantité disponible est
-supérieure ou égale à la quantité demandée.
-
-L’opération suit le principe suivant :
-
-1. valider que la quantité demandée est un entier strictement positif ;
-2. exécuter une mise à jour conditionnelle ;
-3. diminuer le stock uniquement si la quantité disponible est suffisante ;
-4. vérifier qu’une ligne a réellement été modifiée ;
-5. annuler la transaction si le stock est insuffisant.
-
-Cette stratégie évite que deux retraits simultanés rendent le stock
-négatif.
+- la mémoire conversationnelle disparaît au redémarrage ;
+- un déploiement multi-instance nécessiterait un stockage partagé ;
+- le mode NVIDIA dépend d’Internet et d’une clé valide ;
+- le fallback local produit des réponses plus déterministes ;
+- l’ajout de stock pourrait être renforcé pour les ajouts simultanés ;
+- le projet ne possède pas encore de tests navigateur automatisés complets ;
+- TLS et rate limiting ne sont pas configurés dans l’environnement local ;
+- les services internes doivent rester limités au réseau Docker en production.
 
 ---
 
-## 17. API interne de consultation des stocks
+## 17. Références aux ADR
 
-Le Backoffice expose une API interne en lecture seule utilisée
-uniquement par le serveur MCP.
-
-Endpoints prévus :
-
-- `GET /internal/stocks/products/{product_id}` :
-  retourne les stocks d’un produit dans les différentes branches ;
-
-- `GET /internal/stocks/branches/{branch_id}` :
-  retourne les identifiants produit et les quantités d’une branche ;
-
-- `POST /internal/stocks/check-shopping-list` :
-  vérifie quelles branches peuvent satisfaire une liste d’achats.
-
-Cette API ne retourne aucune donnée descriptive de produit.
-Elle retourne uniquement les identifiants produit, les branches et
-les quantités.
-
-### 17.1 Stock par produit
-
-Endpoint :
-
-`GET /internal/stocks/products/{product_id}`
-
-Réponse réussie :
-
-```json
-{
-  "success": true,
-  "product_id": 12,
-  "branches": [
-    {
-      "branch_id": 1,
-      "branch_name": "Toulouse",
-      "quantity": 8
-    }
-  ],
-  "error": null
-}
-```
-
-Si le produit n’est présent dans aucune branche :
-
-```json
-{
-  "success": true,
-  "product_id": 12,
-  "branches": [],
-  "error": null
-}
-```
-
-Une liste vide n’est pas considérée comme une erreur.
-
-### 17.2 Stock par branche
-
-Endpoint :
-
-`GET /internal/stocks/branches/{branch_id}`
-
-Réponse réussie :
-
-```json
-{
-  "success": true,
-  "branch": {
-    "id": 1,
-    "name": "Toulouse"
-  },
-  "stocks": [
-    {
-      "product_id": 12,
-      "quantity": 8
-    },
-    {
-      "product_id": 25,
-      "quantity": 4
-    }
-  ],
-  "error": null
-}
-```
-
-L’API interne ne retourne aucune donnée descriptive de produit.
-Le serveur MCP récupère ces informations depuis l’API Produit externe.
-
-### 17.3 Vérification d’une liste d’achats
-
-Endpoint :
-
-`POST /internal/stocks/check-shopping-list`
-
-Corps JSON attendu :
-
-```json
-{
-  "items": [
-    {
-      "product_id": 12,
-      "quantity": 3
-    },
-    {
-      "product_id": 25,
-      "quantity": 2
-    }
-  ]
-}
-```
-
-Réponse réussie :
-
-```json
-{
-  "success": true,
-  "matching_branches": [
-    {
-      "branch_id": 1,
-      "branch_name": "Toulouse",
-      "items": [
-        {
-          "product_id": 12,
-          "requested_quantity": 3,
-          "available_quantity": 8
-        },
-        {
-          "product_id": 25,
-          "requested_quantity": 2,
-          "available_quantity": 4
-        }
-      ]
-    }
-  ],
-  "error": null
-}
-```
-
-Si aucune branche ne peut satisfaire toute la liste :
-
-```json
-{
-  "success": true,
-  "matching_branches": [],
-  "error": null
-}
-```
-
-### 17.4 Format des erreurs
-
-Toutes les erreurs suivent ce format :
-
-```json
-{
-  "success": false,
-  "error": {
-    "code": "branch_not_found",
-    "message": "La branche demandée n’existe pas."
-  }
-}
-```
-
-| Statut HTTP | Utilisation |
-|---|---|
-| `400 Bad Request` | Corps JSON, identifiant ou quantité invalide |
-| `403 Forbidden` | Clé interne absente ou incorrecte |
-| `404 Not Found` | Branche inexistante |
-| `500 Internal Server Error` | Erreur interne ou base indisponible |
-| `502 Bad Gateway` | Service externe nécessaire indisponible |
-
-L’absence de stock retourne une réponse `200 OK` avec une liste vide.
-
----
-
-## 18. Protection de l’API interne
-
-Les endpoints `/internal/` ne sont pas destinés au client public.
-
-Le serveur MCP enverra une clé interne dans l’en-tête HTTP :
-
-`X-Internal-API-Key`
-
-Le Backoffice comparera cette valeur avec la variable d’environnement
-`INTERNAL_API_KEY`.
-
-Une requête sans clé ou avec une clé invalide sera refusée avec une
-réponse `403 Forbidden`.
-
-La véritable clé sera enregistrée uniquement dans `.env`.
-Le fichier `.env.example` contiendra une valeur fictive.
+- `ADR 0001` — Utiliser REST pour le client web public ;
+- `ADR 0002` — Utiliser le rendu côté serveur pour le Backoffice ;
+- `ADR 0003` — Utiliser un serveur MCP personnalisé pour les stocks ;
+- `ADR 0004` — Utiliser bcrypt et les sessions Flask ;
+- `ADR 0005` — Organiser le projet en monorepo multi-services.

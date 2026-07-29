@@ -3,7 +3,6 @@
 import asyncio
 from collections.abc import AsyncIterator
 
-import httpx
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -126,22 +125,6 @@ class FakeModelFactory:
     def __call__(self, **configuration: object) -> FakeModelClient:
         self.calls.append(configuration)
         return self.client
-
-
-class TrackingHTTPClientFactory:
-    """Crée un client Ollama local et observable sans réseau."""
-
-    def __init__(self) -> None:
-        self.clients: list[httpx.AsyncClient] = []
-
-    def __call__(self) -> httpx.AsyncClient:
-        client = httpx.AsyncClient(
-            transport=httpx.MockTransport(
-                lambda _request: httpx.Response(500)
-            )
-        )
-        self.clients.append(client)
-        return client
 
 
 def create_test_settings() -> Settings:
@@ -394,9 +377,9 @@ async def test_missing_lifespan_state_returns_controlled_503(
         "status": "not_ready",
         "service": "ai-service",
         "mcp": "disconnected",
-        "provider": "hybrid",
-        "provider_status": "configured",
-        "active_provider": "ollama",
+        "provider": "nvidia",
+        "provider_status": "fallback_rules",
+        "active_provider": "rules",
     }
 
 
@@ -453,40 +436,27 @@ async def test_expected_shutdown_error_is_controlled() -> None:
     assert lifecycle_client.close_count == 1
 
 
-@pytest.mark.parametrize(
-    ("provider", "key_field", "expected_active"),
-    [
-        ("minimax", "minimax_api_key", "minimax"),
-        ("nvidia", "nvidia_api_key", "nvidia"),
-        ("hybrid", "nvidia_api_key", "nvidia"),
-    ],
-)
-async def test_lifespan_selects_one_remote_client_and_closes_it(
-    provider: str,
-    key_field: str,
-    expected_active: str,
-) -> None:
+async def test_lifespan_selects_one_nvidia_client_and_closes_it() -> None:
     """Partage un seul client entre compréhension et rédaction."""
 
     model_client = FakeModelClient()
     model_factory = FakeModelFactory(model_client)
-    settings_data: dict[str, object] = {
-        "ai_model_provider": provider,
-        key_field: "provider-secret-for-test",
-    }
     application = create_app(
-        settings=Settings(**settings_data),
+        settings=Settings(
+            ai_model_provider="nvidia",
+            nvidia_api_key="provider-secret-for-test",
+        ),
         mcp_client_factory=FakeClientFactory(
             FakeLifecycleClient()
         ),
-        minimax_client_factory=model_factory,
+        nvidia_client_factory=model_factory,
     )
 
     async with application.router.lifespan_context(application):
         classifier = application.state.intent_classifier
         generator = application.state.answer_generator
 
-        assert application.state.active_ai_provider == expected_active
+        assert application.state.active_ai_provider == "nvidia"
         assert classifier._model_client is model_client
         assert generator._client is model_client
         assert len(model_factory.calls) == 1
@@ -495,30 +465,24 @@ async def test_lifespan_selects_one_remote_client_and_closes_it(
     assert model_client.close_count == 1
 
     configuration = model_factory.calls[0]
-    if expected_active == "nvidia":
-        assert configuration["token_parameter"] == "max_tokens"
-        assert configuration["additional_payload"] == {}
-        assert configuration["model"] == "minimaxai/minimax-m3"
-    else:
-        assert "token_parameter" not in configuration
-        assert "additional_payload" not in configuration
-        assert configuration["model"] == "MiniMax-M3"
+    assert configuration["model"] == "minimaxai/minimax-m3"
+    assert configuration["base_url"] == (
+        "https://integrate.api.nvidia.com/v1"
+    )
+    assert configuration["request_timeout_seconds"] == 60.0
 
 
-@pytest.mark.parametrize("provider", ["nvidia", "minimax"])
-async def test_missing_remote_key_selects_rules_fallback(
-    provider: str,
-) -> None:
+async def test_missing_nvidia_key_selects_rules_fallback() -> None:
     """N'invente pas de clé et ne construit aucun client distant."""
 
     model_client = FakeModelClient()
     model_factory = FakeModelFactory(model_client)
     application = create_app(
-        settings=Settings(ai_model_provider=provider),
+        settings=Settings(ai_model_provider="nvidia"),
         mcp_client_factory=FakeClientFactory(
             FakeLifecycleClient()
         ),
-        minimax_client_factory=model_factory,
+        nvidia_client_factory=model_factory,
     )
 
     async with application.router.lifespan_context(application):
@@ -530,25 +494,23 @@ async def test_missing_remote_key_selects_rules_fallback(
     assert model_client.close_count == 0
 
 
-@pytest.mark.parametrize("provider", ["ollama", "hybrid"])
-async def test_ollama_selection_shares_and_closes_http_client(
-    provider: str,
-) -> None:
-    """Construit un seul transport local lorsqu'aucune clé NVIDIA existe."""
+async def test_rules_mode_never_constructs_nvidia_client() -> None:
+    """Le mode local n'instancie aucun transport fournisseur."""
 
-    http_factory = TrackingHTTPClientFactory()
+    model_client = FakeModelClient()
+    model_factory = FakeModelFactory(model_client)
     application = create_app(
-        settings=Settings(ai_model_provider=provider),
+        settings=Settings(ai_model_provider="rules"),
         mcp_client_factory=FakeClientFactory(
             FakeLifecycleClient()
         ),
-        ollama_http_client_factory=http_factory,
+        nvidia_client_factory=model_factory,
     )
 
     async with application.router.lifespan_context(application):
-        assert application.state.active_ai_provider == "ollama"
-        assert application.state.answer_generator is not None
-        assert len(http_factory.clients) == 1
-        assert http_factory.clients[0].is_closed is False
+        assert application.state.active_ai_provider == "rules"
+        assert application.state.ai_provider_status == "disabled"
+        assert application.state.answer_generator is None
 
-    assert http_factory.clients[0].is_closed is True
+    assert model_factory.calls == []
+    assert model_client.close_count == 0

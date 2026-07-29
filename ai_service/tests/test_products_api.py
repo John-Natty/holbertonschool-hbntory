@@ -314,10 +314,10 @@ class ForbiddenSemanticComponent:
         raise AssertionError("Le routeur ne doit pas être appelé.")
 
     async def classify(self, _question: str) -> None:
-        """Interdit tout appel Ollama."""
+        """Interdit tout appel au fournisseur NVIDIA."""
 
         self.calls += 1
-        raise AssertionError("Ollama ne doit pas être appelé.")
+        raise AssertionError("NVIDIA ne doit pas être appelé.")
 
 
 async def test_products_bypasses_all_semantic_components(
@@ -325,7 +325,7 @@ async def test_products_bypasses_all_semantic_components(
     client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Contourne routeur, Ollama et AnswerBuilder."""
+    """Contourne routeur, NVIDIA et AnswerBuilder."""
 
     fake_client = FakeCatalogMCPClient()
     await override_catalog_client(application, fake_client)

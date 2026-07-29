@@ -1,6 +1,5 @@
 """Point d'entrée FastAPI du service IA HBntory."""
 
-import httpx
 import uvicorn
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -9,12 +8,11 @@ from fastapi.responses import JSONResponse
 
 from app.api.routes import router
 from app.clients.mcp_client import ProductMCPClient
-from app.clients.minimax_client import MiniMaxClient
+from app.clients.nvidia_client import NVIDIAClient
 from app.config import Settings, get_settings
 from app.lifespan import (
     MCPClientFactory,
-    MiniMaxClientFactory,
-    OllamaHTTPClientFactory,
+    NVIDIAClientFactory,
     active_provider,
     create_lifespan,
     provider_status,
@@ -77,10 +75,7 @@ async def request_validation_error_handler(
 def create_app(
     settings: Settings | None = None,
     mcp_client_factory: MCPClientFactory = ProductMCPClient,
-    minimax_client_factory: MiniMaxClientFactory = MiniMaxClient,
-    ollama_http_client_factory: OllamaHTTPClientFactory = (
-        httpx.AsyncClient
-    ),
+    nvidia_client_factory: NVIDIAClientFactory = NVIDIAClient,
 ) -> FastAPI:
     """Crée l'application et injecte le lifespan du client MCP."""
 
@@ -91,8 +86,7 @@ def create_app(
         lifespan=create_lifespan(
             resolved_settings,
             mcp_client_factory,
-            minimax_client_factory,
-            ollama_http_client_factory,
+            nvidia_client_factory,
         ),
     )
     application.add_middleware(
