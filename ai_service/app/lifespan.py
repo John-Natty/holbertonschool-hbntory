@@ -122,6 +122,7 @@ def create_lifespan(
                     max_tokens=answer_max_tokens,
                 )
                 if model_client is not None
+                and settings.ai_natural_answers
                 else None
             )
             conversation_store = ConversationStore(
