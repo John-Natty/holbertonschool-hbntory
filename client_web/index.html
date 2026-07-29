@@ -28,11 +28,14 @@
                         <!-- Entrée du Backoffice. Une seule page de
                              connexion sert les deux rôles : c'est le compte
                              qui décide de la page d'arrivée.
+                             /auth/entree ferme toute session en cours :
+                             sur un poste partagé, on repart toujours du
+                             formulaire vierge.
                              Adresse à adapter si le Backoffice change de
                              port, comme AI_QUERY_URL dans script.js. -->
                         <a
                             class="backoffice-link"
-                            href="http://localhost:5000/auth/login"
+                            href="http://localhost:5000/auth/entree"
                             target="_blank"
                             rel="noopener"
                         >Espace équipe</a>

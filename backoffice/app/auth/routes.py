@@ -130,6 +130,26 @@ def login():
     )
 
 
+@auth_bp.route("/entree")
+def entree():
+    """Entrée publique du Backoffice, toujours sur une session vierge.
+
+    Le site public y renvoie. Sur un poste partagé en branche, l'employé
+    suivant ne doit jamais hériter de la session du précédent : la
+    session en cours est donc fermée avant d'afficher le formulaire.
+    """
+
+    if current_user.is_authenticated:
+        logout_user()
+
+        flash(
+            "La session précédente a été fermée.",
+            "info",
+        )
+
+    return redirect(url_for("auth.login"))
+
+
 @auth_bp.route("/logout", methods=["POST"])
 @login_required
 def logout():
