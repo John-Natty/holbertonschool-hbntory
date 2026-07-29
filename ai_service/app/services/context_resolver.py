@@ -136,6 +136,11 @@ _WRITE_PATTERN = re.compile(
     r"(?:ajoute|ajouter|retire|supprime|supprimer|cree|creer|"
     r"modifie|modifier|augmente|dimininue|diminue)\b"
 )
+# « Où est... », « Où puis-je trouver... » : une question de lieu.
+# Ancrée en début de phrase pour ne pas confondre avec le « ou »
+# de coordination.
+_LOCATION_PATTERN = re.compile(r"^ou\b")
+
 _STOCK_MARKERS = (
     "disponible",
     "disponibilite",
@@ -150,6 +155,7 @@ _DETAIL_MARKERS = (
     "information",
     "parle",
     "prix",
+    "coute",
     "description",
 )
 _PRONOUN_MARKERS = (
@@ -183,6 +189,7 @@ class ContextResolver:
         question: str,
         state: ConversationState,
         proposed: QueryIntent | None = None,
+        catalog: list[dict[str, object]] | None = None,
     ) -> QueryIntent | None:
         """Protège, résout les références puis revalide une proposition."""
 
@@ -192,7 +199,11 @@ class ContextResolver:
         if guarded is not None:
             return guarded
 
-        contextual = self._resolve_contextual(normalized, state)
+        contextual = self._resolve_contextual(
+            normalized,
+            state,
+            catalog,
+        )
 
         if contextual is not None:
             return contextual
@@ -200,7 +211,38 @@ class ContextResolver:
         if proposed is None:
             return None
 
-        return self._validate_proposed(normalized, state, proposed)
+        return self._validate_proposed(
+            normalized,
+            state,
+            proposed,
+            catalog,
+        )
+
+    def mentions_explicit_product(self, question: str) -> bool:
+        """Indique que la question porte déjà un identifiant de produit."""
+
+        return (
+            _EXPLICIT_PRODUCT_PATTERN.search(_normalize(question))
+            is not None
+        )
+
+    def resolve_named_product(
+        self,
+        question: str,
+        catalog: list[dict[str, object]] | None,
+    ) -> QueryIntent | None:
+        """Résout un produit cité par son nom, hors de toute conversation.
+
+        Retourne None dès qu'un garde-fou s'applique : le refus revient
+        alors au chemin habituel, qui sait le formuler.
+        """
+
+        normalized = _normalize(question)
+
+        if self._guard(normalized) is not None:
+            return None
+
+        return self._resolve_named_product(normalized, catalog)
 
     def _guard(self, normalized: str) -> UnsupportedIntent | None:
         """Refuse le hors domaine et les écritures avant toute mémoire."""
@@ -223,6 +265,7 @@ class ContextResolver:
         self,
         normalized: str,
         state: ConversationState,
+        catalog: list[dict[str, object]] | None = None,
     ) -> QueryIntent | None:
         """Traite un petit ensemble de références explicites et bornées."""
 
@@ -301,6 +344,13 @@ class ContextResolver:
         if combined is not None:
             return combined
 
+        # Un produit désigné par son nom, et par lui seul, se résout sans
+        # le modèle : c'est plus sûr et immédiat.
+        named = self._resolve_named_product(normalized, catalog)
+
+        if named is not None:
+            return named
+
         branch_id, branch_name = _extract_branch(normalized)
 
         if (
@@ -312,6 +362,47 @@ class ContextResolver:
                 branch_name=branch_name,
             )
 
+        return None
+
+    def _resolve_named_product(
+        self,
+        normalized: str,
+        catalog: list[dict[str, object]] | None,
+    ) -> QueryIntent | None:
+        """Résout un produit cité par son nom, sans appeler le modèle."""
+
+        product_id = _named_product_id(normalized, catalog)
+
+        if product_id is None:
+            return None
+
+        asks_location = (
+            _LOCATION_PATTERN.search(normalized) is not None
+            or any(marker in normalized for marker in _STOCK_MARKERS)
+        )
+
+        if asks_location:
+            branch_id, branch_name = _extract_branch(normalized)
+
+            # « stock du backpack » : le nom du produit ne doit pas être
+            # pris pour celui d'une branche.
+            if branch_name is not None and _product_is_named(
+                product_id,
+                _normalize(branch_name),
+                catalog,
+            ):
+                branch_name = None
+
+            return StockByProductIntent(
+                product_id=product_id,
+                branch_id=branch_id,
+                branch_name=branch_name,
+            )
+
+        if any(marker in normalized for marker in _DETAIL_MARKERS):
+            return ProductDetailsIntent(product_id=product_id)
+
+        # Nom reconnu sans intention claire : le modèle tranchera.
         return None
 
     def _resolve_ordinal(
@@ -514,6 +605,7 @@ class ContextResolver:
         normalized: str,
         state: ConversationState,
         proposed: QueryIntent,
+        catalog: list[dict[str, object]] | None = None,
     ) -> QueryIntent:
         """Enrichit sans autoriser une référence conversationnelle fictive."""
 
@@ -533,9 +625,16 @@ class ContextResolver:
             ):
                 return _unsupported("ambiguous")
 
+            # Le numéro peut aussi être ancré par le nom du produit,
+            # à condition que ce nom ne désigne que lui.
             if (
                 anchored_product_id is None
                 and not _has_context_product_reference(normalized)
+                and not _product_is_named(
+                    proposed.product_id,
+                    normalized,
+                    catalog,
+                )
             ):
                 return _unsupported("ambiguous")
 
@@ -623,9 +722,16 @@ class ContextResolver:
             ):
                 return _unsupported("ambiguous")
 
+            # Le numéro peut aussi être ancré par le nom du produit,
+            # à condition que ce nom ne désigne que lui.
             if (
                 anchored_product_id is None
                 and not _has_context_product_reference(normalized)
+                and not _product_is_named(
+                    proposed.product_id,
+                    normalized,
+                    catalog,
+                )
             ):
                 return _unsupported("ambiguous")
 
@@ -786,6 +892,114 @@ def _has_context_product_reference(normalized: str) -> bool:
     return (
         _ORDINAL_PATTERN.search(normalized) is not None
         or any(marker in normalized for marker in _PRONOUN_MARKERS)
+    )
+
+
+def _distinctive_words(
+    catalog: list[dict[str, object]],
+) -> dict[int, set[str]]:
+    """Retourne les mots qui ne désignent qu'un seul produit du catalogue."""
+
+    owners: dict[str, set[int]] = {}
+
+    for entry in catalog:
+        product_id = entry.get("id")
+        name = entry.get("nom")
+
+        if not isinstance(product_id, int) or not isinstance(name, str):
+            continue
+
+        for word in _normalize(name).split():
+            # Les mots courts et les nombres désignent trop de choses
+            # pour identifier un produit à eux seuls.
+            if len(word) < 4 or word.isdigit():
+                continue
+
+            owners.setdefault(word, set()).add(product_id)
+
+    distinctive: dict[int, set[str]] = {}
+
+    for word, product_ids in owners.items():
+        if len(product_ids) != 1:
+            continue
+
+        distinctive.setdefault(
+            next(iter(product_ids)),
+            set(),
+        ).add(word)
+
+    return distinctive
+
+
+def _words_match(word: str, candidate: str) -> bool:
+    """Rapproche deux mots de même racine, d'une langue à l'autre.
+
+    Le catalogue est en anglais alors que les questions sont en français :
+    « ergonomique » ne contient pas « ergonomic », mais les deux partagent
+    la racine « ergon ». Une racine commune d'au moins cinq lettres suffit
+    à les rapprocher sans confondre « chaise » et « chargeur ».
+    """
+
+    if word == candidate:
+        return True
+
+    length = min(len(word), len(candidate), 5)
+
+    return length >= 5 and word[:length] == candidate[:length]
+
+
+def _named_product_id(
+    normalized: str,
+    catalog: list[dict[str, object]] | None,
+) -> int | None:
+    """Retourne le seul produit que la question nomme, s'il est unique.
+
+    Deux produits reconnus dans la même phrase ne donnent aucun résultat :
+    mieux vaut laisser le modèle demander une précision que choisir.
+    """
+
+    if not catalog:
+        return None
+
+    asked = normalized.split()
+    found: set[int] = set()
+
+    for product_id, words in _distinctive_words(catalog).items():
+        if any(
+            _words_match(word, candidate)
+            for word in words
+            for candidate in asked
+        ):
+            found.add(product_id)
+
+    if len(found) != 1:
+        return None
+
+    return next(iter(found))
+
+
+def _product_is_named(
+    product_id: int,
+    normalized: str,
+    catalog: list[dict[str, object]] | None,
+) -> bool:
+    """Vérifie que la question nomme sans ambiguïté ce produit précis.
+
+    Un mot n'ancre un produit que s'il ne désigne que celui-là dans tout
+    le catalogue : « ergonomic » ancre la chaise, « monitor » n'ancre
+    rien puisque deux écrans le portent.
+    """
+
+    if not catalog:
+        return False
+
+    words = _distinctive_words(catalog).get(product_id, set())
+    asked = normalized.split()
+
+    return any(
+        _words_match(word, candidate)
+        for word in words
+        for candidate in asked
     )
 
 

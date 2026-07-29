@@ -13,8 +13,10 @@ from app.clients.mcp_client import ProductMCPClient
 from app.clients.nvidia_client import NVIDIAClient
 from app.config import Settings
 from app.errors import MCPClientError
+from app.models.data import ProductListData
 from app.services.answer_builder import AnswerBuilder
 from app.services.answer_generator import AnswerGenerator
+from app.services.catalog import CatalogSnapshot
 from app.services.context_resolver import ContextResolver
 from app.services.conversation_store import ConversationStore
 from app.services.intent_classifier import (
@@ -111,10 +113,32 @@ def create_lifespan(
             )
 
             context_resolver = ContextResolver()
+
+            async def fetch_catalog_page(
+                *,
+                limit: int,
+                offset: int,
+            ) -> ProductListData:
+                """Lit une page du catalogue au moment où elle est utile."""
+
+                # La session MCP peut avoir été perdue depuis le
+                # démarrage : on la rétablit comme le fait l'orchestrateur.
+                await mcp_client.ensure_connected()
+
+                return await mcp_client.list_products(
+                    limit=limit,
+                    offset=offset,
+                )
+
+            # Le classifieur n'a pas accès au serveur MCP : l'instantané
+            # du catalogue lui sert d'intermédiaire pour relier un nom de
+            # produit à son identifiant.
+            catalog = CatalogSnapshot(fetch_catalog_page)
             classifier = IntentClassifier(
                 model_client=model_client,
                 max_tokens=classification_max_tokens,
                 context_resolver=context_resolver,
+                catalog=catalog,
             )
             answer_generator = (
                 AnswerGenerator(
