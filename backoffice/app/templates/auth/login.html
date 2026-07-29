@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}
+    Connexion — HBntory
+{% endblock %}
+
+{% block content %}
+    <section>
+        <h2>Connexion</h2>
+
+        <form method="post" novalidate>
+            {{ form.hidden_tag() }}
+
+            <div>
+                {{ form.username.label }}
+
+                {{ form.username(
+                    autocomplete="username"
+                ) }}
+
+                {% for error in form.username.errors %}
+                    <p>{{ error }}</p>
+                {% endfor %}
+            </div>
+
+            <div>
+                {{ form.password.label }}
+
+                {{ form.password(
+                    autocomplete="current-password"
+                ) }}
+
+                {% for error in form.password.errors %}
+                    <p>{{ error }}</p>
+                {% endfor %}
+            </div>
+
+            <div>
+                {{ form.remember() }}
+                {{ form.remember.label }}
+            </div>
+
+            <div>
+                {{ form.submit() }}
+            </div>
+        </form>
+    </section>
+{% endblock %}

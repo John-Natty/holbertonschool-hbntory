@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HBntory — Assistant produits</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <!-- Superpositions décoratives : pluie numérique et lignes de balayage -->
+    <canvas id="matrix" aria-hidden="true"></canvas>
+    <div class="fx-scanlines" aria-hidden="true"></div>
+
+    <div class="layout">
+        <!-- Cadre de l'assistant : reste collé en haut de la fenêtre
+             pendant que le catalogue défile derrière lui. -->
+        <div class="assistant-dock">
+            <main class="app">
+                <div class="app-header">
+                    <!-- Le lien reste collé au titre, loin du bouton
+                         « Envoyer » : on ne peut pas le viser par erreur. -->
+                    <div class="app-header-main">
+                        <h1 class="glitch" data-text="ASSISTANT PRODUITS">
+                            ASSISTANT PRODUITS
+                        </h1>
+
+                        <!-- Entrée du Backoffice. Une seule page de
+                             connexion sert les deux rôles : c'est le compte
+                             qui décide de la page d'arrivée.
+                             /auth/entree ferme toute session en cours :
+                             sur un poste partagé, on repart toujours du
+                             formulaire vierge.
+                             Adresse à adapter si le Backoffice change de
+                             port, comme AI_QUERY_URL dans script.js. -->
+                        <a
+                            class="backoffice-link"
+                            href="http://localhost:5000/auth/entree"
+                            target="_blank"
+                            rel="noopener"
+                        >Espace équipe</a>
+                    </div>
+
+                    <!-- Barre d'état décorative -->
+                    <div class="statusbar" aria-hidden="true">
+                        <span class="statusbar-dot"></span>
+                        <span>SYSTEM ONLINE</span>
+                        <span class="statusbar-tag">HBNTORY // C-29</span>
+                    </div>
+                </div>
+
+                <!-- Formulaire de saisie de la question -->
+                <form id="question-form" class="question-form">
+                    <label for="question" class="sr-only">
+                        Votre question
+                    </label>
+
+                    <input
+                        type="text"
+                        id="question"
+                        name="question"
+                        class="question-input"
+                        placeholder="> posez votre question sur un produit"
+                        autocomplete="off"
+                        required
+                    >
+
+                    <button type="submit" id="submit-button" class="submit-button">
+                        Envoyer
+                    </button>
+                </form>
+
+                <!-- Indicateur de chargement, masqué par défaut -->
+                <p id="loading" class="loading" hidden>
+                    // ANALYSE EN COURS<span class="loading-dots"></span>
+                </p>
+
+                <!-- Zone d'affichage de la réponse, remplie par le script -->
+                <section
+                    id="answer"
+                    class="answer"
+                    aria-live="polite"
+                    hidden
+                ></section>
+
+                <!-- Zone d'affichage des erreurs, remplie par le script -->
+                <p
+                    id="error"
+                    class="error"
+                    role="alert"
+                    hidden
+                ></p>
+            </main>
+        </div>
+
+        <!-- Catalogue en grille, sous le cadre de l'assistant -->
+        <section class="catalog" aria-label="Catalogue des produits">
+            <h2 class="catalog-title">Catalogue</h2>
+
+            <p id="catalog-status" class="catalog-status">
+                Chargement du catalogue&hellip;
+            </p>
+
+            <ul id="catalog-grid" class="catalog-grid" hidden></ul>
+        </section>
+    </div>
+
+    <script src="background.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

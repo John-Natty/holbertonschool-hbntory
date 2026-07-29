@@ -1,0 +1,179 @@
+services:
+  external-products-api:
+    # API Produit officielle, construite depuis son dépôt Git.
+    build:
+      context: https://github.com/hbtn-edu/hbntory-products-api.git
+    ports:
+      # Port ordinateur : port interne du conteneur
+      - "${PRODUCT_API_PORT:-5001}:5000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen(
+          'http://localhost:5000/api/v1/products?limit=1&offset=0',
+          timeout=2).read()
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  database:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - database_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  backoffice:
+    build:
+      context: ./backoffice
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SECRET_KEY: ${SECRET_KEY}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      PRODUCT_API_BASE_URL: http://external-products-api:5000
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      SEED_ADMIN_USERNAME: ${SEED_ADMIN_USERNAME}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD}
+      SEED_BRANCH_1_NAME: ${SEED_BRANCH_1_NAME}
+      SEED_BRANCH_2_NAME: ${SEED_BRANCH_2_NAME}
+    command:
+      - sh
+      - -c
+      - >-
+        python -m flask --app app:create_app db upgrade &&
+        python -m flask --app app:create_app run
+        --host=0.0.0.0 --port=5000
+    depends_on:
+      database:
+        condition: service_healthy
+      external-products-api:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import socket;
+          socket.create_connection(('localhost', 5000), 2).close()
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  product-mcp-server:
+    build:
+      context: ./product_mcp_server
+    environment:
+      PRODUCT_API_BASE_URL: http://external-products-api:5000
+      BACKOFFICE_INTERNAL_URL: http://backoffice:5000
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8000
+    depends_on:
+      backoffice:
+        condition: service_healthy
+      external-products-api:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import socket;
+          socket.create_connection(('localhost', 8000), 2).close()
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  ai-service:
+    build:
+      context: ./ai_service
+    environment:
+      AI_SERVICE_HOST: 0.0.0.0
+      AI_SERVICE_PORT: 8001
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080}
+      MCP_SERVER_URL: http://product-mcp-server:8000/mcp
+      MCP_REQUEST_TIMEOUT_SECONDS: 10
+      MCP_MAX_CONCURRENT_CALLS: 10
+      MCP_RECONNECT_ATTEMPTS: 3
+      MCP_RECONNECT_INITIAL_DELAY_SECONDS: 0.25
+      MCP_RECONNECT_MAX_DELAY_SECONDS: 2
+      CONVERSATION_TTL_SECONDS: ${CONVERSATION_TTL_SECONDS:-1800}
+      CONVERSATION_MAX_TURNS: ${CONVERSATION_MAX_TURNS:-10}
+      CONVERSATION_MAX_SESSIONS: ${CONVERSATION_MAX_SESSIONS:-1000}
+      AI_MODEL_PROVIDER: ${AI_MODEL_PROVIDER:-nvidia}
+      AI_NATURAL_ANSWERS: ${AI_NATURAL_ANSWERS:-true}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      NVIDIA_BASE_URL: ${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      NVIDIA_MODEL: ${NVIDIA_MODEL:-minimaxai/minimax-m3}
+      NVIDIA_REQUEST_TIMEOUT_SECONDS: ${NVIDIA_REQUEST_TIMEOUT_SECONDS:-60}
+      NVIDIA_CLASSIFICATION_MAX_TOKENS: ${NVIDIA_CLASSIFICATION_MAX_TOKENS:-600}
+      NVIDIA_ANSWER_MAX_TOKENS: ${NVIDIA_ANSWER_MAX_TOKENS:-1000}
+    depends_on:
+      product-mcp-server:
+        condition: service_started
+    ports:
+      - "${AI_SERVICE_HOST_PORT:-8001}:8001"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen(
+          'http://localhost:8001/health', timeout=2).read()
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  client-web:
+    build:
+      context: ./client_web
+    depends_on:
+      ai-service:
+        condition: service_healthy
+    ports:
+      - "${CLIENT_WEB_HOST_PORT:-8080}:80"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -O /dev/null http://localhost:80/ || exit 1
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  database_data:
