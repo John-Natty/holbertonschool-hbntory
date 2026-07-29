@@ -4,6 +4,7 @@
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 
 from clients.errors import (
     ExternalServiceResponseError,
@@ -12,6 +13,7 @@ from clients.errors import (
     InvalidClientParameterError,
     ResourceNotFoundError,
 )
+from schemas import BranchReferenceInput
 
 
 class BackofficeAPIClient:
@@ -75,27 +77,60 @@ class BackofficeAPIClient:
 
     async def get_stock_by_branch(
         self,
-        branch_id: int,
+        branch_id: int | None = None,
+        branch_name: str | None = None,
     ) -> dict[str, Any]:
         """Retourne les produits disponibles dans une branche."""
 
-        _validate_positive_identifier(
-            branch_id,
-            "branch_id",
-        )
+        try:
+            validated_reference = BranchReferenceInput(
+                branch_id=branch_id,
+                branch_name=branch_name,
+            )
+        except ValidationError as error:
+            raise InvalidClientParameterError(
+                "Fournissez soit branch_id, soit branch_name."
+            ) from error
 
-        data = await self._request_json(
-            "GET",
-            f"/internal/stocks/branches/{branch_id}",
-        )
+        reference = validated_reference.model_dump()
+
+        if reference["branch_id"] is not None:
+            data = await self._request_json(
+                "GET",
+                (
+                    "/internal/stocks/branches/"
+                    f"{reference['branch_id']}"
+                ),
+            )
+        else:
+            data = await self._request_json(
+                "GET",
+                "/internal/stocks/branches/by-name",
+                params={
+                    "name": reference["branch_name"],
+                },
+            )
 
         branch = _validate_branch(data.get("branch"))
         stocks = data.get("stocks")
 
-        if branch["id"] != branch_id:
+        if (
+            reference["branch_id"] is not None
+            and branch["id"] != reference["branch_id"]
+        ):
             raise ExternalServiceResponseError(
                 "Le Backoffice a retourné une branche différente "
                 "de celle demandée."
+            )
+
+        if (
+            reference["branch_name"] is not None
+            and _normalize_branch_name(branch["name"]).casefold()
+            != reference["branch_name"].casefold()
+        ):
+            raise ExternalServiceResponseError(
+                "Le Backoffice a retourné un nom de branche différent "
+                "de celui demandé."
             )
 
         if not isinstance(stocks, list):
@@ -154,6 +189,7 @@ class BackofficeAPIClient:
         path: str,
         *,
         json: dict[str, Any] | None = None,
+        params: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Appelle le Backoffice et valide sa réponse JSON."""
 
@@ -167,6 +203,7 @@ class BackofficeAPIClient:
                     "X-Internal-API-Key": self._internal_api_key,
                 },
                 json=json,
+                params=params,
             )
 
         except httpx.TimeoutException as error:
@@ -297,6 +334,12 @@ def _validate_branch(branch: Any) -> dict[str, Any]:
         "id": branch_id,
         "name": branch_name,
     }
+
+
+def _normalize_branch_name(value: str) -> str:
+    """Normalise les espaces d'un nom déjà validé."""
+
+    return " ".join(value.split())
 
 
 def _validate_stock(stock: Any) -> dict[str, int]:

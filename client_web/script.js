@@ -3,6 +3,36 @@
 // Adresse publique du service IA vue depuis le navigateur.
 // À adapter si le service IA est exposé sur une autre adresse.
 const AI_QUERY_URL = "http://localhost:8001/api/query";
+const AI_PRODUCTS_URL = "http://localhost:8001/api/products";
+const CONVERSATION_STORAGE_KEY = "hbntory-conversation-id";
+
+// Produits disposant de leur propre illustration, dans img/products/,
+// nommée d'après l'identifiant du produit. Un produit absent de cette
+// liste utilise l'image de sa catégorie.
+const PRODUCTS_WITH_IMAGE = new Set([
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+    11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+    21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+    31, 33, 34, 35, 36, 37, 38, 39, 40,
+]);
+
+const CATEGORY_IMAGES = {
+    "Accessories": "img/categories/accessories.webp",
+    "Audio": "img/categories/audio.webp",
+    "Development Kits": "img/categories/development-kits.webp",
+    "Displays": "img/categories/displays.webp",
+    "Furniture": "img/categories/furniture.webp",
+    "Laptops": "img/categories/laptops.webp",
+    "Mobile Devices": "img/categories/mobile-devices.webp",
+    "Networking": "img/categories/networking.webp",
+    "Operations": "img/categories/operations.webp",
+    "Power": "img/categories/power.webp",
+    "Security": "img/categories/security.webp",
+    "Storage": "img/categories/storage.webp",
+    "Video": "img/categories/video.webp",
+};
+
+const DEFAULT_CATEGORY_IMAGE = "img/categories/default.webp";
 
 // Récupère les éléments manipulés par le script.
 const form = document.getElementById("question-form");
@@ -12,9 +42,19 @@ const loading = document.getElementById("loading");
 const answer = document.getElementById("answer");
 const error = document.getElementById("error");
 
-// Éléments du panneau catalogue (colonne de droite).
+// Éléments du catalogue affiché sous l'assistant.
 const catalogStatus = document.getElementById("catalog-status");
-const catalogList = document.getElementById("catalog-list");
+const catalogGrid = document.getElementById("catalog-grid");
+let conversationId = null;
+
+try {
+    conversationId = sessionStorage.getItem(
+        CONVERSATION_STORAGE_KEY
+    );
+} catch (storageError) {
+    // Une politique navigateur stricte ne doit pas bloquer l'assistant.
+    conversationId = null;
+}
 
 
 // Masque la réponse et l'erreur avant chaque nouvelle recherche.
@@ -41,82 +81,13 @@ function escapeHtml(text) {
 }
 
 
-// Décrit une branche par son nom (« la branche de Toulouse »), avec
-// l'élision « d' » devant une voyelle (« la branche d'Albi »).
-// Fonctionne pour n'importe quelle branche, y compris une future.
-function describeBranch(branchName) {
-    const startsWithVowel = /^[aeiouyàâäéèêëîïôöùûü]/i.test(branchName);
-    const preposition = startsWithVowel ? "d’" : "de ";
-
-    return "la branche " + preposition + escapeHtml(branchName);
-}
-
-
-// Met en majuscule la première lettre d'une phrase.
-function capitalize(text) {
-    return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-
-// Joint une liste de noms à la française : « A », « A et B »,
-// « A, B et C ». Fonctionne pour n'importe quel nombre de branches.
-function joinFrenchList(names) {
-    if (names.length === 1) {
-        return names[0];
-    }
-
-    const last = names[names.length - 1];
-    const others = names.slice(0, -1);
-
-    return others.join(", ") + " et " + last;
-}
-
-
-// Met en forme la réponse :
-// - détail d'un produit : retire les guillemets françaises autour du
-//   nom et le met en gras ;
-// - stock disponible dans une seule branche : nomme cette branche au
-//   lieu de se contenter de « 1 branche » ;
-// - stock disponible dans plusieurs branches : liste leurs villes au
-//   lieu de se contenter d'un nombre ;
-// - liste d'achats satisfaite par une seule branche : idem.
+// Affiche le texte naturel du service après l'avoir échappé.
+// Le seul enrichissement HTML autorisé met un nom entre guillemets en gras.
 function formatAnswerHtml(data) {
     const escaped = escapeHtml(data.answer);
 
     if (data.type === "product_details") {
         return escaped.replace(/«\s*([^»]+?)\s*»/, "<strong>$1</strong>");
-    }
-
-    if (data.type === "stock_by_product" && data.data.branches.length === 1) {
-        const branchName = data.data.branches[0].branch_name;
-
-        return (
-            "Le produit " + data.data.product_id + " est disponible dans "
-            + describeBranch(branchName) + "."
-        );
-    }
-
-    if (data.type === "stock_by_product" && data.data.branches.length > 1) {
-        const names = data.data.branches.map(
-            (branch) => escapeHtml(branch.branch_name)
-        );
-
-        return (
-            "Le produit " + data.data.product_id + " est disponible à "
-            + joinFrenchList(names) + "."
-        );
-    }
-
-    if (
-        data.type === "shopping_list"
-        && data.data.matching_branches.length === 1
-    ) {
-        const branchName = data.data.matching_branches[0].branch_name;
-
-        return (
-            capitalize(describeBranch(branchName))
-            + " peut satisfaire entièrement cette liste d’achats."
-        );
     }
 
     return escaped;
@@ -140,22 +111,49 @@ function setBusy(isBusy) {
 
 // Interroge le service IA et retourne sa réponse JSON.
 async function askQuestion(question) {
+    const payload = { question: question };
+
+    if (conversationId) {
+        payload.conversation_id = conversationId;
+    }
+
     const response = await fetch(AI_QUERY_URL, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
         },
-        body: JSON.stringify({ question: question }),
+        body: JSON.stringify(payload),
     });
+    const data = await response.json();
 
-    // Une réponse HTTP en erreur est signalée clairement.
-    if (!response.ok) {
-        throw new Error(
-            "Le service a répondu avec le code " + response.status + "."
-        );
+    // Le serveur peut renouveler un identifiant expiré. L'onglet utilise
+    // toujours la dernière valeur opaque sans l'exposer dans l'URL.
+    if (typeof data.conversation_id === "string") {
+        conversationId = data.conversation_id;
+
+        try {
+            sessionStorage.setItem(
+                CONVERSATION_STORAGE_KEY,
+                conversationId
+            );
+        } catch (storageError) {
+            // La conversation continue en mémoire pour l'onglet courant.
+        }
     }
 
-    return response.json();
+    // Conserve uniquement le message public structuré du service IA.
+    if (!response.ok) {
+        const publicError = new Error(
+            data.answer
+            || data.error?.message
+            || "Une erreur est survenue."
+        );
+        publicError.isPublic = true;
+
+        throw publicError;
+    }
+
+    return data;
 }
 
 
@@ -186,11 +184,13 @@ async function handleSubmit(event) {
             showError(data.answer || "Une erreur est survenue.");
         }
 
-    } catch (networkError) {
-        // Couvre les pannes réseau et les réponses illisibles.
-        showError(
-            "Impossible de contacter le service. Réessayez plus tard."
-        );
+    } catch (requestError) {
+        // Ne montre jamais le détail technique d'une panne réseau ou JSON.
+        const message = requestError.isPublic
+            ? requestError.message
+            : "Impossible de contacter le service. Réessayez plus tard.";
+
+        showError(message);
 
     } finally {
         // Réactive toujours le formulaire, même en cas d'erreur.
@@ -207,18 +207,6 @@ function fillQuestion(question) {
 }
 
 
-// Relie chaque commande du panneau gauche au champ de l'assistant.
-function bindCommandButtons() {
-    const buttons = document.querySelectorAll(".cmd-item");
-
-    for (const button of buttons) {
-        button.addEventListener("click", function () {
-            fillQuestion(button.textContent.trim());
-        });
-    }
-}
-
-
 // Met en forme un prix avec sa devise, ou un tiret si absent.
 function formatPrice(product) {
     if (typeof product.unit_price !== "number") {
@@ -229,49 +217,81 @@ function formatPrice(product) {
 }
 
 
-// Construit une entrée du catalogue : le clic compose la question
-// de stock correspondante dans l'assistant, sans l'envoyer.
-function buildCatalogItem(product) {
+// Retourne l'illustration propre au produit, celle de sa catégorie,
+// ou l'illustration de repli.
+function productImage(product) {
+    if (PRODUCTS_WITH_IMAGE.has(product.id)) {
+        return "img/products/" + product.id + ".webp";
+    }
+
+    return CATEGORY_IMAGES[product.category] || DEFAULT_CATEGORY_IMAGE;
+}
+
+
+// Construit la zone image d'une carte.
+function buildCardMedia(product) {
+    const media = document.createElement("span");
+    const image = document.createElement("img");
+
+    media.className = "product-card-media";
+    image.className = "product-card-image";
+    image.src = productImage(product);
+    image.loading = "lazy";
+    image.alt = "";
+    media.appendChild(image);
+
+    return media;
+}
+
+
+// Construit le nom et le prix affichés sous l'image.
+function buildCardBody(product) {
+    const body = document.createElement("span");
+    const name = document.createElement("span");
+    const price = document.createElement("span");
+
+    body.className = "product-card-body";
+    name.className = "product-card-name";
+    name.textContent = product.name || "—";
+    price.className = "product-card-price";
+    price.textContent = formatPrice(product);
+    body.appendChild(name);
+    body.appendChild(price);
+
+    return body;
+}
+
+
+// Construit une carte produit : le clic prépare une question de stock
+// dans l'assistant sans l'envoyer automatiquement.
+function buildProductCard(product) {
     const item = document.createElement("li");
-    const button = document.createElement("button");
+    const card = document.createElement("button");
 
-    button.type = "button";
-    button.className = "catalog-item";
-
-    const idSpan = document.createElement("span");
-    idSpan.className = "catalog-item-id";
-    idSpan.textContent = "#" + product.id;
-
-    const nameSpan = document.createElement("span");
-    nameSpan.className = "catalog-item-name";
-    nameSpan.textContent = product.name || "—";
-
-    const priceSpan = document.createElement("span");
-    priceSpan.className = "catalog-item-price";
-    priceSpan.textContent = formatPrice(product);
-
-    button.appendChild(idSpan);
-    button.appendChild(nameSpan);
-    button.appendChild(priceSpan);
-
-    button.addEventListener("click", function () {
-        fillQuestion("stock du produit " + product.id);
+    card.type = "button";
+    card.className = "product-card";
+    card.appendChild(buildCardMedia(product));
+    card.appendChild(buildCardBody(product));
+    card.addEventListener("click", function () {
+        fillQuestion(
+            "Où puis-je trouver le produit " + product.id + " ?"
+        );
     });
-
-    item.appendChild(button);
+    item.appendChild(card);
 
     return item;
 }
 
 
-// Charge le catalogue au démarrage, via l'assistant IA lui-même,
-// et l'affiche dans le panneau de droite.
+// Charge le catalogue technique sans consommer de génération IA.
 async function loadCatalog() {
     try {
-        // Une seule requête suffit : la limite maximale du service est 100.
-        const data = await askQuestion("liste les 100 premiers produits");
+        const response = await fetch(
+            AI_PRODUCTS_URL + "?limit=100&offset=0"
+        );
+        const data = await response.json();
 
-        if (!data.success || data.type !== "product_list") {
+        if (!response.ok || !data.success) {
             catalogStatus.textContent =
                 "Catalogue indisponible pour le moment.";
             return;
@@ -286,12 +306,12 @@ async function loadCatalog() {
         }
 
         for (const product of products) {
-            catalogList.appendChild(buildCatalogItem(product));
+            catalogGrid.appendChild(buildProductCard(product));
         }
 
-        // Remplace le message de chargement par la liste remplie.
+        // Remplace le message de chargement par la grille remplie.
         catalogStatus.hidden = true;
-        catalogList.hidden = false;
+        catalogGrid.hidden = false;
 
     } catch (networkError) {
         catalogStatus.textContent =
@@ -301,5 +321,4 @@ async function loadCatalog() {
 
 
 form.addEventListener("submit", handleSubmit);
-bindCommandButtons();
 loadCatalog();

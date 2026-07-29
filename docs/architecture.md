@@ -228,11 +228,29 @@ Ces outils interrogent l’API Produit externe.
 
 ```text
 get_stock_by_product(product_id)
-get_stock_by_branch(branch_id)
+get_stock_by_branch(branch_id | branch_name)
 check_shopping_list(items)
 ```
 
 Ces outils interrogent l’API interne du Backoffice.
+
+`get_stock_by_branch` reste un seul outil parmi les cinq. Il exige exactement
+une référence : un `branch_id` strictement positif ou un `branch_name` non
+vide. Dans le second cas, le MCP appelle
+`GET /internal/stocks/branches/by-name?name=...` avec
+`X-Internal-API-Key`. Le Backoffice normalise les espaces, compare le nom exact
+sans tenir compte de la casse et retourne le nom métier réellement stocké.
+La route existante `GET /internal/stocks/branches/<branch_id>` reste inchangée.
+
+Pour `get_stock_by_branch`, les identifiants et quantités proviennent du
+Backoffice. Le MCP consulte ensuite l’API Produit externe avec les
+`product_id` reçus et ajoute le `product_name`, le `unit_price` et la
+`currency` officiels à chaque ligne. Cette agrégation reste interne au même
+outil : le service IA effectue toujours un seul appel MCP métier et ne
+contacte directement aucun des deux services. La réponse publique peut ainsi
+présenter, pour chaque ligne de stock, le numéro du produit, sa quantité
+locale, son nom et son prix unitaire sans confondre le stock d'une branche
+avec le catalogue général.
 
 Le serveur MCP :
 
@@ -268,8 +286,30 @@ Lorsque les outils ne fournissent pas suffisamment d’informations,
 le service doit le signaler clairement.
 
 Chaque requête `POST /api/query` effectue au maximum un appel MCP métier.
+L'appel accepte un `conversation_id` facultatif. Le premier tour crée un
+identifiant opaque ; les tours suivants utilisent une mémoire en RAM bornée
+pour résoudre des références telles que `le deuxième`, `celui-ci`, `cette
+branche` ou `et à Toulouse ?`. Le résolveur ne peut sélectionner qu'un produit
+ou une branche réellement présents dans l'état de la conversation.
+
+Lorsque `AI_MODEL_PROVIDER=minimax`, MiniMax-M3 peut effectuer au maximum une
+classification contextuelle puis une rédaction par message. Ses sorties
+structurées et leurs relations factuelles sont validées par Pydantic et par le
+code Python. Aucun modèle ne fait de tool calling : l'orchestrateur Python
+choisit seul l'outil MCP. Un fallback local minimal comprend les demandes
+simples et `AnswerBuilder` construit la réponse si le fournisseur est absent
+ou invalide.
+
+Les fournisseurs IA ne reçoivent jamais de clé interne, URL de service,
+en-tête, requête SQL, trace brute, objet MCP ou réponse MCP brute. Ils
+reçoivent uniquement une histoire récente bornée, un état conversationnel
+réduit et les faits strictement nécessaires à la rédaction. Les messages
+historiques restent des données non fiables, séparées des instructions
+système.
 `GET /health` décrit uniquement le processus HTTP. `GET /ready` vérifie la
 session MCP et déclenche une reconnexion bornée lorsque celle-ci a été perdue.
+Il expose également le mode demandé, l'état configuré et le fournisseur
+réellement sélectionné dans `active_provider`, sans l'appeler.
 Le service IA démarre en mode dégradé si MCP est absent et récupère après son
 retour sans redémarrage manuel. Les erreurs de validation HTTP 422 utilisent
 le même contrat structuré que les autres erreurs publiques.
@@ -288,12 +328,18 @@ Il contient :
 - une zone de réponse ;
 - une gestion simple des erreurs.
 
-Il communique avec le service AI Query par REST.
+Il communique avec le service AI Query par REST. Il conserve uniquement
+l'identifiant opaque retourné par `POST /api/query` et le renvoie avec la
+question suivante.
 En développement, son origine `http://localhost:8080` est explicitement
 autorisée par la politique CORS du service IA.
 
-Chaque question est indépendante et aucun historique de conversation
-n’est conservé dans le MVP.
+L'historique métier reste dans la mémoire volatile du service IA. Il est
+séparé par conversation, limité à dix tours, expire après trente minutes
+d'inactivité et disparaît au redémarrage. Il ne constitue ni un compte
+utilisateur, ni une mémoire persistante. Un identifiant absent de la mémoire
+ou expiré est remplacé par un nouvel identifiant généré par le serveur afin
+d'éviter qu'un client puisse imposer une session.
 
 ---
 
@@ -304,6 +350,8 @@ flowchart TB
     PublicUser[Utilisateur public]
     Client[Client web public]
     AIService[AI Query Service]
+    Model[MiniMax-M3 ou fallback local]
+    Memory[Mémoire conversationnelle RAM]
     MCP[Serveur MCP]
 
     Employee[Employé]
@@ -314,7 +362,9 @@ flowchart TB
     ProductAPI[API Produit externe]
 
     PublicUser --> Client
-    Client -->|POST /api/query| AIService
+    Client -->|POST /api/query + conversation_id| AIService
+    AIService -->|État réduit borné| Memory
+    AIService -->|Classification et rédaction validées| Model
     AIService -->|Au plus un appel MCP métier| MCP
 
     MCP -->|Outils produits| ProductAPI
@@ -356,6 +406,7 @@ des données produit ou des données de stock.
 | Backoffice | PostgreSQL | SQLAlchemy | Données internes |
 | Backoffice | API Produit | HTTP | Validation et affichage des produits |
 | Client public | AI Query Service | REST | Questions publiques |
+| AI Query Service | MiniMax-M3 ou fallback local | HTTPS ou local | Compréhension contextuelle et rédaction validée |
 | AI Query Service | Serveur MCP | MCP | Appel des outils |
 | Serveur MCP | API Produit | HTTP | Informations produit |
 | Serveur MCP | API interne Backoffice | HTTP | Informations de stock |
@@ -415,14 +466,19 @@ Dans quelle branche le produit 12 est-il disponible ?
 Parcours :
 
 ```text
-1. Le client web envoie la question avec `POST /api/query`.
-2. Le service IA identifie le produit demandé.
-3. L’orchestrateur appelle uniquement `get_stock_by_product`.
-4. Le MCP interroge l’API interne du Backoffice.
-5. Le Backoffice consulte PostgreSQL.
-6. Le résultat validé est retourné au service IA.
-7. `AnswerBuilder` construit la réponse sans donnée inventée.
-8. Le client web affiche la réponse.
+1. Le client web envoie la question avec `POST /api/query` et, si disponible,
+   le `conversation_id` précédent.
+2. Le service ouvre l'état RAM de cette conversation sous verrou.
+3. Le résolveur puis le classifieur produisent une intention Pydantic valide.
+4. L’orchestrateur appelle uniquement `get_stock_by_product`.
+5. Le MCP interroge l’API interne du Backoffice.
+6. Le Backoffice consulte PostgreSQL.
+7. Le résultat validé est retourné au service IA.
+8. Le générateur rédige depuis les faits nettoyés et les relations déclarées
+   sont vérifiées ; `AnswerBuilder` prend le relais en cas d'échec.
+9. Le service enregistre seulement un état réduit puis retourne la réponse et
+   le même `conversation_id`.
+10. Le client web affiche la réponse.
 ```
 
 Diagramme :
@@ -432,19 +488,31 @@ sequenceDiagram
     actor User as Utilisateur public
     participant Client as Client web
     participant AI as AI Query Service
+    participant Memory as Mémoire RAM bornée
+    participant Model as Fournisseur IA sélectionné
     participant MCP as Serveur MCP
     participant Backoffice as API interne Backoffice
     participant DB as PostgreSQL
 
     User->>Client: Pose une question
-    Client->>AI: POST /api/query
+    Client->>AI: POST /api/query + conversation_id facultatif
+    AI->>Memory: Ouvre l'état réduit sous verrou
+    opt Fournisseur configuré et garde locale non terminale
+        AI->>Model: Question, historique borné et état réduit
+        Model-->>AI: Intention JSON stricte
+    end
     AI->>MCP: get_stock_by_product
     MCP->>Backoffice: Requête de stock
     Backoffice->>DB: Requête SQLAlchemy
     DB-->>Backoffice: Quantités disponibles
     Backoffice-->>MCP: Réponse structurée
     MCP-->>AI: Résultat validé
-    AI-->>Client: Réponse JSON
+    opt Fournisseur configuré
+        AI->>Model: Claims métier validés et contexte borné
+        Model-->>AI: Segments et claims JSON stricts
+    end
+    AI->>Memory: Enregistre un résumé et libère le verrou
+    AI-->>Client: Réponse JSON + conversation_id
     Client-->>User: Affichage de la réponse
 ```
 
@@ -579,6 +647,7 @@ Le MVP doit inclure :
 - branches possédant un produit ;
 - produits disponibles dans une branche ;
 - vérification d’une liste d’achats ;
+- conversation multi-tour volatile et bornée ;
 - refus d’inventer des informations absentes.
 
 ### Client web
@@ -595,7 +664,7 @@ Le MVP doit inclure :
 
 Les fonctionnalités suivantes ne sont pas prioritaires :
 
-- historique de conversation ;
+- historique persistant ou synchronisé entre plusieurs instances ;
 - streaming des réponses ;
 - WebSocket ;
 - notifications ;
@@ -620,12 +689,12 @@ Les décisions détaillées sont documentées dans :
 
 ## 16. Stratégie de retrait atomique du stock
 
-Les retraits de stock seront exécutés dans une transaction.
+Les retraits de stock sont exécutés dans une transaction.
 
-La mise à jour ne sera appliquée que si la quantité disponible est
+La mise à jour est appliquée uniquement si la quantité disponible est
 supérieure ou égale à la quantité demandée.
 
-L’opération suivra le principe suivant :
+L’opération suit le principe suivant :
 
 1. valider que la quantité demandée est un entier strictement positif ;
 2. exécuter une mise à jour conditionnelle ;
@@ -640,7 +709,7 @@ négatif.
 
 ## 17. API interne de consultation des stocks
 
-Le Backoffice exposera une API interne en lecture seule utilisée
+Le Backoffice expose une API interne en lecture seule utilisée
 uniquement par le serveur MCP.
 
 Endpoints prévus :

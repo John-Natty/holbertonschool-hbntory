@@ -60,8 +60,8 @@ async def test_get_stock_by_product_returns_success():
 async def test_get_stock_by_branch_returns_success():
     """Retourne les produits disponibles dans une branche."""
 
-    client = AsyncMock()
-    client.get_stock_by_branch.return_value = {
+    backoffice_client = AsyncMock()
+    backoffice_client.get_stock_by_branch.return_value = {
         "branch": {
             "id": 1,
             "name": "Toulouse",
@@ -77,9 +77,19 @@ async def test_get_stock_by_branch_returns_success():
             },
         ],
     }
+    product_client = AsyncMock()
+    product_client.get_product_details.side_effect = (
+        lambda product_id: {
+            "id": product_id,
+            "name": f"Produit {product_id}",
+            "unit_price": 49.99,
+            "currency": "EUR",
+        }
+    )
 
     result = await get_stock_by_branch_tool(
-        client,
+        backoffice_client,
+        product_client,
         branch_id=1,
     )
 
@@ -92,17 +102,54 @@ async def test_get_stock_by_branch_returns_success():
         "stocks": [
             {
                 "product_id": 12,
+                "product_name": "Produit 12",
+                "unit_price": 49.99,
+                "currency": "EUR",
                 "quantity": 8,
             },
             {
                 "product_id": 25,
+                "product_name": "Produit 25",
+                "unit_price": 49.99,
+                "currency": "EUR",
                 "quantity": 4,
             },
         ],
         "error": None,
     }
 
-    client.get_stock_by_branch.assert_awaited_once_with(1)
+    backoffice_client.get_stock_by_branch.assert_awaited_once_with(1)
+    assert product_client.get_product_details.await_count == 2
+    product_client.get_product_details.assert_any_await(12)
+    product_client.get_product_details.assert_any_await(25)
+
+
+@pytest.mark.asyncio
+async def test_get_stock_by_branch_accepts_name():
+    """Transmet un nom au même outil de stock par branche."""
+
+    backoffice_client = AsyncMock()
+    backoffice_client.get_stock_by_branch.return_value = {
+        "branch": {
+            "id": 1,
+            "name": "Toulouse",
+        },
+        "stocks": [],
+    }
+    product_client = AsyncMock()
+
+    result = await get_stock_by_branch_tool(
+        backoffice_client,
+        product_client,
+        branch_name="Toulouse",
+    )
+
+    assert result["success"] is True
+    assert result["branch"]["name"] == "Toulouse"
+    backoffice_client.get_stock_by_branch.assert_awaited_once_with(
+        branch_name="Toulouse"
+    )
+    product_client.get_product_details.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -207,15 +254,16 @@ async def test_invalid_parameters_are_transformed():
 async def test_missing_branch_is_transformed():
     """Transforme une branche inexistante en réponse structurée."""
 
-    client = AsyncMock()
-    client.get_stock_by_branch.side_effect = (
+    backoffice_client = AsyncMock()
+    backoffice_client.get_stock_by_branch.side_effect = (
         ResourceNotFoundError(
             "La branche demandée n'existe pas."
         )
     )
 
     result = await get_stock_by_branch_tool(
-        client,
+        backoffice_client,
+        AsyncMock(),
         branch_id=999999,
     )
 
@@ -280,8 +328,8 @@ async def test_backoffice_errors_are_transformed(
 async def test_unexpected_python_error_is_not_hidden():
     """Laisse remonter un bug inattendu pour faciliter son diagnostic."""
 
-    client = AsyncMock()
-    client.get_stock_by_branch.side_effect = RuntimeError(
+    backoffice_client = AsyncMock()
+    backoffice_client.get_stock_by_branch.side_effect = RuntimeError(
         "Bug inattendu"
     )
 
@@ -290,6 +338,41 @@ async def test_unexpected_python_error_is_not_hidden():
         match="Bug inattendu",
     ):
         await get_stock_by_branch_tool(
-            client,
+            backoffice_client,
+            AsyncMock(),
             branch_id=1,
         )
+
+
+@pytest.mark.asyncio
+async def test_product_api_error_during_enrichment_is_transformed():
+    """Transforme une panne Produit sans inventer de nom."""
+
+    backoffice_client = AsyncMock()
+    backoffice_client.get_stock_by_branch.return_value = {
+        "branch": {
+            "id": 1,
+            "name": "Toulouse",
+        },
+        "stocks": [
+            {
+                "product_id": 12,
+                "quantity": 8,
+            },
+        ],
+    }
+    product_client = AsyncMock()
+    product_client.get_product_details.side_effect = (
+        ExternalServiceUnavailableError(
+            "L'API Produit est injoignable."
+        )
+    )
+
+    result = await get_stock_by_branch_tool(
+        backoffice_client,
+        product_client,
+        branch_id=1,
+    )
+
+    assert result["success"] is False
+    assert result["error"]["code"] == "service_unavailable"

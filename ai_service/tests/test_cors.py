@@ -68,6 +68,30 @@ async def test_allowed_post_exposes_exact_origin(
     assert "access-control-allow-credentials" not in response.headers
 
 
+async def test_allowed_catalog_get_exposes_existing_origin(
+    client: AsyncClient,
+) -> None:
+    """Autorise la route catalogue sans ajouter d'origine."""
+
+    response = await client.options(
+        "/api/products",
+        headers={
+            "Origin": ALLOWED_ORIGIN,
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 200
+    assert (
+        response.headers["access-control-allow-origin"]
+        == ALLOWED_ORIGIN
+    )
+    assert "GET" in response.headers[
+        "access-control-allow-methods"
+    ]
+    assert "access-control-allow-credentials" not in response.headers
+
+
 async def test_forbidden_origin_is_not_authorized(
     client: AsyncClient,
 ) -> None:

@@ -170,13 +170,14 @@ class FakeBackofficeAPIClient:
 
     async def get_stock_by_branch(
         self,
-        branch_id: int,
+        branch_id: int | None = None,
+        branch_name: str | None = None,
     ) -> dict[str, Any]:
         """Retourne les stocks d'une branche."""
 
         return {
             "branch": {
-                "id": branch_id,
+                "id": branch_id or 1,
                 "name": "Toulouse",
             },
             "stocks": [
@@ -412,11 +413,72 @@ async def test_get_stock_by_branch_through_mcp_protocol(
         "stocks": [
             {
                 "product_id": 12,
+                "product_name": "Produit de test",
+                "unit_price": 49.99,
+                "currency": "EUR",
                 "quantity": 8,
             },
         ],
         "error": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_get_stock_by_branch_name_through_mcp_protocol(
+    mcp_server,
+):
+    """Appelle le même outil MCP avec un nom de branche."""
+
+    async with create_connected_server_and_client_session(
+        mcp_server,
+        raise_exceptions=True,
+    ) as session:
+        result = await session.call_tool(
+            "get_stock_by_branch",
+            {
+                "branch_name": "Toulouse",
+            },
+        )
+
+    content = get_structured_content(result)
+
+    assert content["success"] is True
+    assert content["branch"]["name"] == "Toulouse"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {},
+        {
+            "branch_id": 1,
+            "branch_name": "Toulouse",
+        },
+        {
+            "branch_name": "",
+        },
+    ],
+)
+async def test_get_stock_by_branch_rejects_invalid_reference(
+    mcp_server,
+    arguments,
+):
+    """Refuse une référence absente, double ou vide."""
+
+    async with create_connected_server_and_client_session(
+        mcp_server,
+        raise_exceptions=True,
+    ) as session:
+        result = await session.call_tool(
+            "get_stock_by_branch",
+            arguments,
+        )
+
+    if result.structuredContent is None:
+        assert result.isError is True
+    else:
+        assert get_structured_content(result)["success"] is False
 
 
 @pytest.mark.asyncio
@@ -536,8 +598,26 @@ async def test_identifiers_are_positive_in_mcp_schemas(
     assert product_schema["exclusiveMinimum"] == 0
     assert product_schema["type"] == "integer"
 
-    assert branch_schema["exclusiveMinimum"] == 0
-    assert branch_schema["type"] == "integer"
+    numeric_branch_schema = next(
+        variant
+        for variant in branch_schema["anyOf"]
+        if variant.get("type") == "integer"
+    )
+
+    assert numeric_branch_schema["exclusiveMinimum"] == 0
+    assert numeric_branch_schema["type"] == "integer"
+
+    branch_name_schema = tools[
+        "get_stock_by_branch"
+    ].inputSchema["properties"]["branch_name"]
+    string_branch_schema = next(
+        variant
+        for variant in branch_name_schema["anyOf"]
+        if variant.get("type") == "string"
+    )
+
+    assert string_branch_schema["minLength"] == 1
+    assert string_branch_schema["maxLength"] == 100
 
 
 @pytest.mark.asyncio
@@ -623,6 +703,26 @@ async def test_shopping_list_output_schema_is_explicit(
         "product_id",
         "requested_quantity",
         "available_quantity",
+    }
+
+
+@pytest.mark.asyncio
+async def test_stock_by_branch_output_requires_product_details(
+    mcp_server,
+):
+    """Exige le nom et le prix officiels avec la quantité."""
+
+    tools = await get_registered_tools(mcp_server)
+    schema = tools["get_stock_by_branch"].outputSchema
+    stock_schema = schema["$defs"]["StockSchema"]
+
+    assert stock_schema["additionalProperties"] is False
+    assert set(stock_schema["required"]) == {
+        "product_id",
+        "product_name",
+        "unit_price",
+        "currency",
+        "quantity",
     }
 
 

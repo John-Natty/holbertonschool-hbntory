@@ -86,6 +86,9 @@ SUCCESS_RESULTS = {
         "stocks": [
             {
                 "product_id": 12,
+                "product_name": "Produit de test",
+                "unit_price": 49.99,
+                "currency": "EUR",
                 "quantity": 8,
             },
         ],
@@ -900,6 +903,28 @@ async def test_five_methods_call_exact_tools_and_return_models() -> None:
     await client.close()
 
 
+async def test_stock_by_branch_accepts_name() -> None:
+    """Transmet un nom normalisé au même outil MCP."""
+
+    environment = FakeMCPEnvironment()
+    client = environment.create_client()
+    await client.connect()
+
+    result = await client.get_stock_by_branch(
+        branch_name="  Toulouse  "
+    )
+
+    assert isinstance(result, StockByBranchData)
+    assert environment.session.calls[-1] == (
+        "get_stock_by_branch",
+        {
+            "branch_name": "Toulouse",
+        },
+    )
+
+    await client.close()
+
+
 async def test_shopping_list_preserves_duplicates() -> None:
     """Ne modifie pas silencieusement la liste transmise au serveur."""
 
@@ -947,6 +972,15 @@ async def test_shopping_list_preserves_duplicates() -> None:
         ("get_stock_by_product", {"product_id": 0}),
         ("get_stock_by_branch", {"branch_id": 0}),
         ("get_stock_by_branch", {"branch_id": False}),
+        ("get_stock_by_branch", {}),
+        (
+            "get_stock_by_branch",
+            {
+                "branch_id": 1,
+                "branch_name": "Toulouse",
+            },
+        ),
+        ("get_stock_by_branch", {"branch_name": ""}),
         ("check_shopping_list", {"items": []}),
         (
             "check_shopping_list",

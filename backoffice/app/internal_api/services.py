@@ -19,6 +19,14 @@ class InternalAPIValidationError(ValueError):
     """Erreur levée quand une requête interne est invalide."""
 
 
+class InternalAPIAmbiguousBranchError(LookupError):
+    """Erreur levée quand un nom correspond à plusieurs branches."""
+
+
+class InternalAPIBranchNotFoundError(LookupError):
+    """Erreur levée quand aucune branche ne porte le nom demandé."""
+
+
 def get_stock_by_product(product_id: int) -> list[dict]:
     """Retourne les branches possédant un produit en stock."""
 
@@ -72,6 +80,35 @@ def get_stock_by_branch(branch_id: int) -> tuple[Branch, list[dict]]:
         }
         for stock in stocks
     ]
+
+
+def get_stock_by_branch_name(
+    branch_name: str,
+) -> tuple[Branch, list[dict]]:
+    """Résout un nom normalisé puis retourne le stock de la branche."""
+
+    normalized_name = _normalize_branch_name(branch_name)
+    branches = db.session.scalars(
+        select(Branch).order_by(Branch.id)
+    ).all()
+    matching_branches = [
+        branch
+        for branch in branches
+        if _normalize_branch_name(branch.name).casefold()
+        == normalized_name.casefold()
+    ]
+
+    if not matching_branches:
+        raise InternalAPIBranchNotFoundError(
+            "La branche demandée n'existe pas."
+        )
+
+    if len(matching_branches) > 1:
+        raise InternalAPIAmbiguousBranchError(
+            "Le nom demandé correspond à plusieurs branches."
+        )
+
+    return get_stock_by_branch(matching_branches[0].id)
 
 
 def check_shopping_list(items: list[dict]) -> list[dict]:
@@ -185,3 +222,26 @@ def _validate_positive_identifier(value: int, field_name: str) -> int:
         )
 
     return value
+
+
+def _normalize_branch_name(value: str) -> str:
+    """Normalise seulement les espaces d'un nom de branche."""
+
+    if not isinstance(value, str):
+        raise InternalAPIValidationError(
+            "Le champ branch_name doit être une chaîne."
+        )
+
+    normalized = " ".join(value.split())
+
+    if not normalized:
+        raise InternalAPIValidationError(
+            "Le champ branch_name ne peut pas être vide."
+        )
+
+    if len(normalized) > 100:
+        raise InternalAPIValidationError(
+            "Le champ branch_name ne peut pas dépasser 100 caractères."
+        )
+
+    return normalized

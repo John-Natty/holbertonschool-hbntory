@@ -42,7 +42,7 @@ from app.models.data import (
     StrictModel,
 )
 from app.models.mcp import (
-    BranchIdentifierArguments,
+    BranchReferenceArguments,
     LIST_PRODUCTS_RESULT_ADAPTER,
     ListProductsArguments,
     MCPToolErrorResult,
@@ -551,20 +551,22 @@ class ProductMCPClient:
 
     async def get_stock_by_branch(
         self,
-        branch_id: int,
+        branch_id: int | None = None,
+        branch_name: str | None = None,
     ) -> StockByBranchData:
         """Retourne les stocks validés d'une branche."""
 
         arguments = self._validate_arguments(
-            BranchIdentifierArguments,
+            BranchReferenceArguments,
             {
                 "branch_id": branch_id,
+                "branch_name": branch_name,
             },
         )
 
         return await self._call_and_validate(
             "get_stock_by_branch",
-            arguments.model_dump(),
+            arguments.model_dump(exclude_none=True),
             STOCK_BY_BRANCH_RESULT_ADAPTER,
             StockByBranchData,
         )

@@ -13,6 +13,7 @@ from clients.product_api import ProductAPIClient
 from config import Settings, load_settings
 from mcp_compat import enforce_strict_tool_arguments
 from schemas import (
+    BranchName,
     ListProductsResponse,
     PageLimit,
     PageOffset,
@@ -139,15 +140,18 @@ def create_server(
     @mcp.tool()
     async def get_stock_by_branch(
         ctx: Context[ServerSession, AppContext],
-        branch_id: StrictPositiveInt,
+        branch_id: StrictPositiveInt | None = None,
+        branch_name: BranchName | None = None,
     ) -> StockByBranchResponse:
-        """Retourne les produits disponibles dans une branche."""
+        """Retourne le stock via exactement un identifiant ou un nom."""
 
         app_context = ctx.request_context.lifespan_context
 
         return await get_stock_by_branch_tool(
             app_context.backoffice_client,
+            app_context.product_client,
             branch_id=branch_id,
+            branch_name=branch_name,
         )
 
     @mcp.tool()

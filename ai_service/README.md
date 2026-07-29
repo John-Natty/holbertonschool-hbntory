@@ -10,56 +10,244 @@ active est partagée pendant le lifespan FastAPI et vérifie les cinq outils
 attendus. Si elle est perdue, elle est fermée puis remplacée par une
 reconnexion bornée et synchronisée.
 
-`POST /api/query` utilise une orchestration déterministe. Le mode par défaut
-applique uniquement les règles locales. Un mode Ollama optionnel peut proposer
-une intention structurée comme seconde chance lorsqu'elles ne comprennent pas
-la question.
+`POST /api/query` accepte une question seule ou une question accompagnée du
+`conversation_id` retourné au tour précédent. Une mémoire courte en RAM permet
+de résoudre les références utiles (`le deuxième`, `celui-ci`, `et à
+Toulouse ?`) sans conserver les réponses MCP brutes. Pydantic valide le
+contrat, l'état résolu et les paramètres métier. L'orchestrateur Python choisit
+seul l'un des cinq outils MCP et effectue au maximum un appel métier par
+message.
 
-Ollama ne génère jamais la réponse métier et ne possède aucun mécanisme de
-tool calling. Sa sortie est validée par les modèles Pydantic existants puis
-par une vérification d'ancrage dans la question. L'orchestrateur conserve seul
-le choix parmi les cinq méthodes MCP et construit la réponse finale depuis les
-données MCP validées. Une requête publique exécute au maximum un appel MCP
-métier.
+Lorsque `AI_MODEL_PROVIDER=minimax`, MiniMax-M3 est le fournisseur principal :
+une première complétion au maximum comprend la question et son contexte borné,
+puis une seconde au maximum rédige la réponse depuis les seuls faits validés.
+Le modèle ne fait jamais de tool calling. Si le fournisseur est absent,
+indisponible ou produit une sortie invalide, le résolveur local minimal et
+`AnswerBuilder` assurent un fallback déterministe.
+
+Le modèle ne possède aucun mécanisme de tool calling dans HBntory et ne
+reçoit aucune URL interne, clé de service ou configuration. Les gardes locales
+refusent d'abord les écritures et le hors domaine. Les relations factuelles
+structurées de chaque réponse générée sont ensuite comparées aux données
+validées ; une relation ajoutée, oubliée, dupliquée ou permutée est rejetée.
+`AnswerBuilder` remplace toute rédaction indisponible ou invalide. Les pages de
+plus de dix produits conservent volontairement la liste déterministe complète :
+cela évite une longue génération et garantit qu'aucune ligne ne soit oubliée.
+
+Les réponses de stock par branche affichent le numéro, la quantité, le nom
+officiel et le prix unitaire de chaque produit. Le même outil
+`get_stock_by_branch` récupère la quantité auprès du Backoffice puis enrichit
+chaque ligne avec l'API Produit. Le contrat MCP retourne `product_id`,
+`product_name`, `unit_price`, `currency` et `quantity`. Cette mise en forme ne
+déclenche jamais de second appel MCP et n'invente aucune donnée produit.
 
 Routes disponibles :
 
 - `GET /health` : état du processus HTTP ;
 - `GET /ready` : disponibilité de la session MCP, avec `200` ou `503` ;
+- `GET /api/products` : chargement structuré et déterministe du catalogue ;
 - `POST /api/query` : validation et traitement injectable d'une question.
 
-## Questions reconnues
+## Conversation multi-tour
 
-Le routeur accepte six intentions :
+Une première requête reste compatible avec le contrat historique :
 
-- `product_list` : `liste les produits`, `liste les 10 premiers produits`
-  ou `affiche les produits à partir de 20` ;
-- `product_details` : `détails du produit 12`, `montre le produit 12` ou
-  `quel est le prix du produit 12` ;
-- `stock_by_product` : `où trouver le produit 12` ou
-  `stock du produit 12` ;
-- `stock_by_branch` : `stock de la branche 3` ou
-  `que contient la branche 3` ;
+```json
+{
+  "question": "Où est disponible le produit 11 ?"
+}
+```
+
+Le serveur crée un identifiant opaque et le retourne dans toutes les variantes
+de réponse :
+
+```json
+{
+  "conversation_id": "b0d85946-4a3c-4fb5-87c9-2dcd77fe90d2",
+  "success": true,
+  "answer": "Le produit 11 est disponible à Carcassonne avec 10 unités.",
+  "type": "stock_by_product",
+  "data": {
+    "product_id": 11,
+    "branches": [
+      {
+        "branch_id": 2,
+        "branch_name": "Carcassonne",
+        "quantity": 10
+      }
+    ]
+  },
+  "error": null
+}
+```
+
+Le tour suivant renvoie cet identifiant :
+
+```json
+{
+  "conversation_id": "b0d85946-4a3c-4fb5-87c9-2dcd77fe90d2",
+  "question": "Et à Toulouse ?"
+}
+```
+
+L'identifiant est généré aléatoirement côté serveur, ne contient aucune donnée
+utilisateur et ne doit pas être construit à partir d'un nom, d'une adresse ou
+d'un secret. Un identifiant vide, mal formé ou trop long est refusé.
+
+La mémoire est volontairement locale au processus et volatile :
+
+- expiration après `CONVERSATION_TTL_SECONDS=1800` secondes d'inactivité ;
+- au plus `CONVERSATION_MAX_TURNS=10` tours récents par conversation ;
+- au plus `CONVERSATION_MAX_SESSIONS=1000` conversations, avec éviction des
+  moins récemment utilisées ;
+- verrou distinct par conversation afin de sérialiser deux messages reçus en
+  même temps sans bloquer les autres conversations ;
+- aucun secret, client HTTP, objet MCP, réponse MCP brute ou donnée PostgreSQL
+  n'est stocké.
+
+L'état mémorisé se limite aux derniers messages bornés, à la dernière
+intention, au produit et à la branche utiles, aux identifiants d'une liste
+affichée, à la liste d'achats courante et à quelques résultats métier réduits.
+Deux identifiants différents ne partagent jamais leur état. Une expiration ou
+un redémarrage efface le contexte. Si le client renvoie ensuite un identifiant
+devenu inconnu, le serveur le remplace par un nouvel identifiant aléatoire ;
+une référence devenue impossible à résoudre provoque alors une demande de
+clarification.
+
+## Questions en langage naturel
+
+L'utilisateur écrit sa demande avec ses propres mots. Les termes `article`,
+`référence`, `matériel` et `marchandise` peuvent désigner un produit ; les
+termes `agence`, `boutique`, `magasin` et `dépôt` peuvent désigner une branche.
+Le système conserve six intentions strictes :
+
+- `product_list` : parcourir le catalogue, avec pagination facultative ;
+- `product_details` : demander les informations, le prix, la description,
+  la marque, la catégorie ou le fournisseur d'un produit ;
+- `stock_by_product` : demander où un produit est disponible ;
+- `stock_by_branch` : demander ce que contient une branche ou un dépôt,
+  désigné par son identifiant ou par son nom ;
 - `shopping_list` : liste explicite d'identifiants et de quantités ;
 - `unsupported` : demande inconnue, incomplète ou contradictoire.
 
-Le format fermé d'une liste d'achats est par exemple :
+Le rôle d'un nombre dépend de la structure de la phrase :
+
+```text
+les 10 premiers produits
+    -> product_list, limit=10
+
+le produit 10
+    -> product_details, product_id=10
+```
+
+Cette distinction fonctionne également avec `dix produits`, `produit dix` et
+`article numéro dix`. Le mot `détails` ne suffit jamais à transformer une
+demande portant sur plusieurs produits en détail d'un seul produit.
+
+Une branche peut être demandée naturellement, par exemple avec `stock de
+Toulouse`, `inventaire du site Toulouse` ou `liste les produits de la branche
+Carcassonne`. La présence d'une branche explicite impose l'intention
+`stock_by_branch`, même si la phrase contient `liste les produits`; elle ne
+doit pas charger le catalogue général. L'intention transporte alors
+`branch_name`, sans inventer de `branch_id`. Le même outil MCP
+`get_stock_by_branch` accepte exactement une référence : `branch_id` ou
+`branch_name`. Avec un nom, le MCP utilise la route interne protégée
+`GET /internal/stocks/branches/by-name?name=...`. Le Backoffice résout le nom
+réel sans tenir compte de la casse, après normalisation des espaces.
+
+Exemple de réponse :
+
+```text
+La branche Toulouse possède 1 référence en stock :
+- Produit n°1 — Quantité : 5 — Nom : Holberton Student Laptop 14 — Prix unitaire : 799,00 USD
+```
+
+Pour une intention `product_list`, `answer` présente chaque produit de la page
+avec son identifiant, son nom, son prix et sa devise. Ces lignes utilisent
+uniquement la réponse de `list_products` et ne déclenchent aucun appel de
+détail supplémentaire.
+
+Une liste d'achats peut également être formulée naturellement, tant que chaque
+identifiant est associé à une quantité explicite, écrite en chiffres ou avec
+un petit nombre en français, par exemple :
 
 ```text
 liste d'achats : produit 12 x2, produit 7 x1
 vérifie la liste : 12 x2, 7 x1
 où acheter 12 x2 et 7 x1
+quelle branche peut fournir deux produits 4 et un produit 8 ?
 ```
 
 Les identifiants et quantités doivent être des entiers strictement positifs.
-Les doublons sont transmis sans transformation silencieuse. Un nom de produit
-n'est jamais converti en identifiant.
+Les doublons d'un même produit sont additionnés en conservant l'ordre de sa
+première occurrence. Un nom de produit n'est jamais converti en identifiant.
 
 Une question incomplète, telle que `stock de la branche`, ou une demande
-contenant plusieurs actions retourne une clarification de type `text` sans
-appel MCP.
+contenant plusieurs actions retourne une clarification de type `unsupported`
+sans appel MCP. Il en va de même pour une question hors domaine ou une demande
+d'écriture : le refus reste déterministe et aucun outil MCP n'est appelé.
 
-## Codes HTTP de POST /api/query
+## Chargement technique du catalogue
+
+Le client web peut charger le catalogue indépendamment d'une question libre :
+
+```http
+GET /api/products?limit=100&offset=0
+```
+
+`limit` vaut `100` par défaut et doit rester entre `1` et `100`. `offset` vaut
+`0` par défaut et doit être positif ou nul. La réponse réutilise le contrat
+MCP `ProductListData` :
+
+```json
+{
+  "success": true,
+  "data": {
+    "count": 1,
+    "limit": 100,
+    "offset": 0,
+    "products": [
+      {
+        "id": 4,
+        "sku": "HB-MON-2102",
+        "name": "24 inch Compact Monitor",
+        "description": "Training catalog item.",
+        "category": "Displays",
+        "brand": "LabForge",
+        "supplier_id": "SUP-LAB-002",
+        "supplier_name": "LabForge Supplies",
+        "unit_price": 169.99,
+        "currency": "USD",
+        "discontinued": false,
+        "weight_kg": 3.9,
+        "tags": ["display", "compact"],
+        "updated_at": "2026-05-22T12:00:00Z",
+        "supplier": null
+      }
+    ]
+  },
+  "error": null
+}
+```
+
+Cette route emploie le client MCP partagé et appelle exactement une fois
+`list_products`. Elle ne passe ni par le routeur d'intentions, ni par MiniMax,
+ni par Ollama, ni par `AnswerBuilder`, et ne constitue pas un sixième outil
+MCP.
+
+La séparation publique est donc :
+
+```text
+chargement automatique du catalogue
+    -> GET /api/products
+    -> MCP list_products, sans classification
+
+question rédigée par l'utilisateur
+    -> POST /api/query
+    -> compréhension libre puis zéro ou un appel MCP
+```
+
+## Codes HTTP publics
 
 - `200` : résultat MCP validé ou clarification sans donnée métier ;
 - `404` : produit ou branche absent ;
@@ -68,6 +256,10 @@ appel MCP.
 - `503` : serveur MCP indisponible ;
 - `504` : délai MCP dépassé ;
 - `500` : bug inattendu, avec un corps générique sans détail interne.
+
+Pour `GET /api/products`, une page vide reste un succès `200`. Une pagination
+invalide retourne `422` avant tout appel MCP et une indisponibilité MCP
+retourne une erreur structurée `503`.
 
 ## Installation
 
@@ -90,16 +282,33 @@ Valeurs par défaut :
 AI_SERVICE_HOST=0.0.0.0
 AI_SERVICE_PORT=8001
 CORS_ALLOWED_ORIGINS=http://localhost:8080
+CONVERSATION_TTL_SECONDS=1800
+CONVERSATION_MAX_TURNS=10
+CONVERSATION_MAX_SESSIONS=1000
 MCP_SERVER_URL=http://product-mcp-server:8000/mcp
 MCP_REQUEST_TIMEOUT_SECONDS=10
 MCP_MAX_CONCURRENT_CALLS=10
 MCP_RECONNECT_ATTEMPTS=3
 MCP_RECONNECT_INITIAL_DELAY_SECONDS=0.25
 MCP_RECONNECT_MAX_DELAY_SECONDS=2
-AI_INTENT_PROVIDER=rules
+AI_MODEL_PROVIDER=hybrid
+NVIDIA_API_KEY=
+NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
+NVIDIA_MODEL=minimaxai/minimax-m3
+NVIDIA_REQUEST_TIMEOUT_SECONDS=120
+NVIDIA_CLASSIFICATION_MAX_TOKENS=600
+NVIDIA_ANSWER_MAX_TOKENS=1000
+MINIMAX_API_KEY=
+MINIMAX_BASE_URL=https://api.minimax.io/v1
+MINIMAX_MODEL=MiniMax-M3
+MINIMAX_REQUEST_TIMEOUT_SECONDS=60
+MINIMAX_CLASSIFICATION_MAX_TOKENS=600
+MINIMAX_ANSWER_MAX_TOKENS=1000
 OLLAMA_BASE_URL=http://ollama:11434
 OLLAMA_MODEL=gemma3:latest
-OLLAMA_REQUEST_TIMEOUT_SECONDS=30
+OLLAMA_REQUEST_TIMEOUT_SECONDS=60
+OLLAMA_CLASSIFICATION_MAX_TOKENS=600
+OLLAMA_ANSWER_MAX_TOKENS=1000
 ```
 
 `CORS_ALLOWED_ORIGINS` contient une ou plusieurs origines HTTP explicites,
@@ -120,17 +329,51 @@ seule session est créée même si plusieurs requêtes demandent simultanément
 une récupération. Après le retour du MCP, aucune relance manuelle du service
 IA n'est nécessaire.
 
-`AI_INTENT_PROVIDER` accepte :
+`AI_MODEL_PROVIDER` accepte :
 
-- `rules` : aucune création de client Ollama et aucun appel réseau ;
-- `ollama` : règles prioritaires, puis une classification Ollama maximum
-  uniquement pour une intention `unsupported`.
+- `hybrid` : sélectionne NVIDIA comme fournisseur unique si sa clé existe,
+  sinon Ollama ; aucune cascade de fournisseurs n'est effectuée par message ;
+- `nvidia` : utilise `minimaxai/minimax-m3` via NVIDIA pour comprendre puis
+  rédiger si sa clé existe, sinon reste sur les fallbacks locaux ;
+- `minimax` : MiniMax-M3 comprend le message avec l'historique borné et rédige
+  la réponse finale ; le service effectue au maximum deux appels MiniMax par
+  message ;
+- `rules` : compréhension locale minimale et réponses `AnswerBuilder`, sans
+  fournisseur ;
+- `ollama` : utilise Ollama comme fournisseur unique pour comprendre puis
+  rédiger.
 
-Le client HTTP Ollama est partagé pendant tout le lifespan et fermé à l'arrêt.
-Une panne, un timeout ou une sortie invalide conserve la clarification
-déterministe avec un statut `200`. Ollama n'est pas pris en compte par
-`/ready`. Cette route vérifie la connexion MCP et tente une récupération
-bornée si nécessaire, sans appel d'outil métier.
+Le fournisseur est choisi une seule fois pendant le lifespan et son client
+HTTP asynchrone est partagé jusqu'à l'arrêt. Les gardes locales sont appliquées
+avant le modèle. Pour une demande métier, le budget maximal est une complétion
+de compréhension, un appel MCP et une complétion de rédaction. Une panne ou
+une sortie invalide active le fallback local, sans tenter un second
+fournisseur.
+
+Le client HTTP asynchrone NVIDIA utilise l'interface Chat Completions
+compatible OpenAI sur
+`https://integrate.api.nvidia.com/v1/chat/completions`. Il est créé une fois
+pendant le lifespan, partagé puis fermé à l'arrêt. Il utilise `max_tokens`
+conformément au contrat NVIDIA et n'envoie jamais de champ `tools` ou
+`tool_choice`.
+
+Avec une clé NVIDIA configurée, le même client partagé sert à la compréhension
+puis à la rédaction structurée, soit au maximum deux complétions par message.
+Sans clé ou en cas de sortie invalide, le fallback local et `AnswerBuilder`
+restent disponibles sans erreur non structurée.
+
+L'endpoint NVIDIA Build est adapté au prototypage et peut être soumis à des
+quotas ou à une forte latence. Il évite le solde MiniMax direct, mais exige
+tout de même une clé NVIDIA personnelle. Le délai par défaut est donc de
+120 secondes. Une erreur, une limite de requêtes ou une indisponibilité active
+automatiquement les réponses déterministes sans rendre le service inutilisable.
+
+`GET /ready` n'appelle pas le fournisseur et ne consomme aucun crédit. Son
+champ `provider_status` vaut `configured`, `fallback_rules` ou `disabled`. La
+disponibilité globale reste fondée sur MCP, car les fallbacks permettent au
+service de fonctionner sans fournisseur distant. Le champ `provider` conserve
+le mode demandé et `active_provider` indique le choix réellement construit :
+`nvidia`, `minimax`, `ollama` ou `rules`.
 
 Pour vérifier manuellement que le modèle configuré existe déjà localement :
 
@@ -166,11 +409,11 @@ docker compose up -d
 docker compose ps
 ```
 
-Le mode Compose par défaut est `rules` et ne démarre pas Ollama. Le service IA
-est publié par défaut sur `http://localhost:8001`. Le port hôte peut être
-changé avec `AI_SERVICE_HOST_PORT`. Compose ordonne le démarrage du MCP avant
-l'IA mais n'exige pas qu'il soit sain : `/health` reste disponible en mode
-dégradé.
+Le mode Compose par défaut est `hybrid`. Il démarre Ollama, attend son
+healthcheck, puis lance le service IA. Une `NVIDIA_API_KEY` configurée
+sélectionne NVIDIA comme fournisseur unique ; sans clé, Ollama est sélectionné.
+Le service IA est publié par défaut sur `http://localhost:8001`. Le port hôte
+peut être changé avec `AI_SERVICE_HOST_PORT`.
 
 Contrôles HTTP :
 
@@ -179,8 +422,22 @@ curl --fail http://localhost:8001/health
 curl --fail http://localhost:8001/ready
 
 curl --fail \
+  "http://localhost:8001/api/products?limit=100&offset=0"
+
+curl --fail \
   --header "Content-Type: application/json" \
   --data '{"question":"liste les produits"}' \
+  http://localhost:8001/api/query
+```
+
+Pour tester un second tour, recopier uniquement le `conversation_id` public
+retourné par la première réponse :
+
+```bash
+curl --fail \
+  --header "Content-Type: application/json" \
+  --data \
+  '{"conversation_id":"<id-retourne>","question":"Et à Toulouse ?"}' \
   http://localhost:8001/api/query
 ```
 
@@ -194,35 +451,27 @@ docker compose down
 `docker compose down` conserve les volumes PostgreSQL et Ollama tant que
 l'option `--volumes` n'est pas ajoutée.
 
-## Ollama optionnel avec Docker Compose
+## Modèle Ollama local
 
-Ollama appartient au profil `ollama` et n'est jamais une dépendance de
-démarrage obligatoire du service IA :
+Ollama démarre avec la pile Compose et conserve ses modèles dans
+`ollama-data`. Vérifier les modèles disponibles :
 
 ```bash
-docker compose --profile ollama up -d ollama
-curl --fail http://localhost:11434/api/tags
+docker compose exec ollama ollama list
 ```
 
 Le modèle doit être téléchargé explicitement par un opérateur :
 
 ```bash
-docker compose --profile ollama exec ollama \
+docker compose exec ollama \
   ollama pull gemma3:latest
 ```
 
-Aucun build et aucun démarrage de service n'exécute cette commande
-automatiquement. Après vérification de la présence du modèle, le mode hybride
-peut être activé avec :
-
-```bash
-AI_INTENT_PROVIDER=ollama \
-  docker compose up -d --force-recreate ai-service
-```
-
-Si Ollama est absent, trop lent ou retourne une sortie invalide, `/api/query`
-conserve la clarification déterministe. `/health` et `/ready` ne dépendent pas
-de sa disponibilité.
+Aucun build et aucun démarrage de service ne télécharge un modèle
+automatiquement. Si Ollama est trop lent ou retourne une sortie invalide, le
+fallback local prend en charge la compréhension simple et `AnswerBuilder`
+conserve une réponse déterministe. Aucun autre fournisseur n'est appelé
+pendant ce message.
 
 ## Flux de données Compose
 
@@ -235,14 +484,18 @@ client HTTP
 ```
 
 `ai-service` ne reçoit aucune URL, clé ou variable PostgreSQL du Backoffice.
-Il contacte uniquement le serveur MCP pour les données métier. Ollama reçoit
-seulement la question à classifier, jamais une réponse MCP, un produit ou un
-stock.
+Il contacte uniquement le serveur MCP pour les données métier. Le fournisseur
+configuré reçoit un historique court, l'état conversationnel réduit, la
+question courante et, pour la rédaction seulement, une projection nettoyée
+des données validées. Aucun modèle ne reçoit `INTERNAL_API_KEY`, une URL
+interne, un en-tête MCP, une trace brute, un objet de session ou une réponse
+MCP brute. Les messages historiques sont explicitement traités comme des
+données non fiables et leur taille est bornée.
 
 Les erreurs de validation de `POST /api/query`, y compris un JSON malformé,
-retournent HTTP `422` avec les cinq champs publics `success`, `answer`, `type`,
-`data` et `error`. Aucun détail Pydantic ou contenu brut invalide n'est
-exposé.
+retournent HTTP `422` avec les six champs publics `conversation_id`, `success`,
+`answer`, `type`, `data` et `error`. Aucun détail Pydantic ou contenu brut
+invalide n'est exposé.
 
 ## Tests
 
@@ -261,5 +514,7 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python \
 ```
 
 L'orchestration n'appelle jamais directement le Backoffice, l'API Produit ou
-PostgreSQL. Le classificateur ne reçoit ni données MCP, ni stock, ni produit,
-ni URL métier, et ses textes ne sont jamais utilisés comme réponse publique.
+PostgreSQL. Tous les appels Ollama, NVIDIA et MiniMax sont simulés dans les
+tests : aucune vraie clé et aucun quota ne sont utilisés. Les tests vérifient
+également la sélection unique du fournisseur, les fallbacks, les relations
+factuelles, l'absence de tool calling et les limites d'appels.

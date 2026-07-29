@@ -14,11 +14,12 @@ from app.models.query import (
     ShoppingListResponse,
     StockByBranchResponse,
     StockByProductResponse,
-    TextResponse,
+    UnsupportedResponse,
 )
 
 
 QUERY_RESPONSE_ADAPTER = TypeAdapter(QueryResponse)
+CONVERSATION_ID = "c" * 43
 
 
 def sample_supplier() -> dict:
@@ -61,7 +62,7 @@ def valid_response_payloads() -> dict[str, dict]:
 
     product = sample_product()
 
-    return {
+    payloads = {
         "product_list": {
             "success": True,
             "answer": "Un produit est disponible.",
@@ -111,6 +112,9 @@ def valid_response_payloads() -> dict[str, dict]:
                 "stocks": [
                     {
                         "product_id": 12,
+                        "product_name": "Produit de test",
+                        "unit_price": 49.99,
+                        "currency": "EUR",
                         "quantity": 8,
                     },
                 ],
@@ -138,10 +142,10 @@ def valid_response_payloads() -> dict[str, dict]:
             },
             "error": None,
         },
-        "text": {
+        "unsupported": {
             "success": True,
             "answer": "Précisez le produit recherché.",
-            "type": "text",
+            "type": "unsupported",
             "data": None,
             "error": None,
         },
@@ -157,6 +161,11 @@ def valid_response_payloads() -> dict[str, dict]:
         },
     }
 
+    for payload in payloads.values():
+        payload["conversation_id"] = CONVERSATION_ID
+
+    return payloads
+
 
 RESPONSE_CLASSES = {
     "product_list": ProductListResponse,
@@ -164,7 +173,7 @@ RESPONSE_CLASSES = {
     "stock_by_product": StockByProductResponse,
     "stock_by_branch": StockByBranchResponse,
     "shopping_list": ShoppingListResponse,
-    "text": TextResponse,
+    "unsupported": UnsupportedResponse,
     "error": ErrorResponse,
 }
 
@@ -237,6 +246,7 @@ def test_query_response_accepts_each_variant(response_type):
         RESPONSE_CLASSES[response_type],
     )
     assert set(response.model_dump(mode="json")) == {
+        "conversation_id",
         "success",
         "answer",
         "type",
@@ -267,10 +277,10 @@ def invalid_consistency_payloads() -> list:
     successful_error_type = deepcopy(payloads["error"])
     successful_error_type["success"] = True
 
-    extra_field = deepcopy(payloads["text"])
+    extra_field = deepcopy(payloads["unsupported"])
     extra_field["unexpected"] = True
 
-    empty_answer = deepcopy(payloads["text"])
+    empty_answer = deepcopy(payloads["unsupported"])
     empty_answer["answer"] = "   "
 
     return [

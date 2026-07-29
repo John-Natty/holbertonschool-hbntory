@@ -195,6 +195,44 @@ async def test_get_stock_by_branch_accepts_empty_stock():
 
 
 @pytest.mark.asyncio
+async def test_get_stock_by_branch_resolves_normalized_name():
+    """Transmet un nom normalisé à la route interne dédiée."""
+
+    def handler(request):
+        assert request.method == "GET"
+        assert request.url.path == (
+            "/internal/stocks/branches/by-name"
+        )
+        assert request.url.params["name"] == "Toulouse"
+        assert request.headers["X-Internal-API-Key"] == (
+            INTERNAL_API_KEY
+        )
+
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "branch": {
+                    "id": 1,
+                    "name": "Toulouse",
+                },
+                "stocks": [],
+                "error": None,
+            },
+        )
+
+    async with create_test_client(handler) as client:
+        result = await client.get_stock_by_branch(
+            branch_name="  Toulouse  "
+        )
+
+    assert result["branch"] == {
+        "id": 1,
+        "name": "Toulouse",
+    }
+
+
+@pytest.mark.asyncio
 async def test_check_shopping_list_returns_matching_branches():
     """Retourne les branches pouvant satisfaire toute la liste."""
 
@@ -334,6 +372,60 @@ async def test_branch_identifier_is_validated(identifier):
     ) as client:
         with pytest.raises(InvalidClientParameterError):
             await client.get_stock_by_branch(identifier)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("branch_id", "branch_name"),
+    [
+        (None, None),
+        (1, "Toulouse"),
+        (None, ""),
+        (None, "   "),
+        (None, 12),
+    ],
+)
+async def test_branch_reference_is_exclusive_and_strict(
+    branch_id,
+    branch_name,
+):
+    """Refuse une référence absente, double ou un nom invalide."""
+
+    async with create_test_client(
+        lambda _request: pytest.fail(
+            "Aucun appel HTTP ne devait être effectué."
+        )
+    ) as client:
+        with pytest.raises(InvalidClientParameterError):
+            await client.get_stock_by_branch(
+                branch_id=branch_id,
+                branch_name=branch_name,
+            )
+
+
+@pytest.mark.asyncio
+async def test_unknown_branch_name_is_transformed():
+    """Transforme aussi le 404 de la résolution par nom."""
+
+    def handler(request):
+        assert request.url.params["name"] == "Inconnue"
+
+        return httpx.Response(
+            404,
+            json={
+                "success": False,
+                "error": {
+                    "code": "branch_not_found",
+                    "message": "La branche demandée n'existe pas.",
+                },
+            },
+        )
+
+    async with create_test_client(handler) as client:
+        with pytest.raises(ResourceNotFoundError):
+            await client.get_stock_by_branch(
+                branch_name="Inconnue"
+            )
 
 
 @pytest.mark.asyncio

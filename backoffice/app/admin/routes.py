@@ -67,10 +67,8 @@ def get_common_user_or_404(user_id):
     return user
 
 
-@admin_bp.route("/users")
-@admin_required
-def list_users():
-    """Affiche la liste des utilisateurs common."""
+def render_users_page():
+    """Affiche la page de gestion des utilisateurs."""
     # Charge les utilisateurs et leur branche efficacement.
     users = db.session.scalars(
         select(User)
@@ -83,6 +81,13 @@ def list_users():
         "admin/users.html",
         users=users,
     )
+
+
+@admin_bp.route("/users")
+@admin_required
+def list_users():
+    """Affiche la liste des utilisateurs common."""
+    return render_users_page()
 
 
 @admin_bp.route(

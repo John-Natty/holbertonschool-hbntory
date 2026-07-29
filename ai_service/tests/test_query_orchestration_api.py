@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import re
 
 import pytest
 from fastapi import FastAPI
@@ -29,6 +30,26 @@ from app.main import create_app
 
 
 pytestmark = pytest.mark.asyncio
+
+OUT_OF_DOMAIN_ANSWER = (
+    "Je peux uniquement répondre aux questions concernant les produits, "
+    "les stocks, les branches et les listes d’achats de HBntory."
+)
+READ_ONLY_ANSWER = (
+    "Cette demande n’est pas disponible : HBntory permet uniquement de "
+    "consulter les produits, les stocks, les branches et les listes d’achats."
+)
+
+
+def without_conversation_id(body: dict) -> dict:
+    """Valide puis retire l'identifiant opaque d'une assertion statique."""
+
+    conversation_id = body.pop("conversation_id")
+    assert re.fullmatch(
+        r"[A-Za-z0-9_-]{32,64}",
+        conversation_id,
+    )
+    return body
 
 
 def product_data() -> ProductData:
@@ -98,6 +119,9 @@ class FakeApplicationMCPClient:
             stocks=[
                 {
                     "product_id": 12,
+                    "product_name": "Produit de test",
+                    "unit_price": 49.99,
+                    "currency": "EUR",
                     "quantity": 8,
                 }
             ],
@@ -270,6 +294,7 @@ def create_test_settings() -> Settings:
         mcp_server_url="http://mcp.test/mcp",
         mcp_request_timeout_seconds=1,
         mcp_max_concurrent_calls=2,
+        ai_model_provider="rules",
     )
 
 
@@ -318,7 +343,10 @@ async def application_client(
                 },
             ),
             "products",
-            "1 produit a été trouvé.",
+            (
+                "1 produit a été trouvé :\n\n"
+                "- #12 — Produit de test — 19,99 EUR"
+            ),
         ),
         (
             "détails du produit 12",
@@ -345,7 +373,10 @@ async def application_client(
                 },
             ),
             "by_product",
-            "Le produit 12 est disponible dans 1 branche.",
+            (
+                "Le produit 12 est disponible dans la branche "
+                "Toulouse, avec 8 unités en stock."
+            ),
         ),
         (
             "stock de la branche 3",
@@ -358,7 +389,9 @@ async def application_client(
             ),
             "by_branch",
             (
-                "La branche 3 possède 1 produit référencé en stock."
+                "La branche Carcassonne possède 1 référence en stock :\n"
+                "- Produit n°12 — Quantité : 8 — "
+                "Nom : Produit de test — Prix unitaire : 49,99 EUR"
             ),
         ),
         (
@@ -381,7 +414,7 @@ async def application_client(
             ),
             "shopping",
             (
-                "1 branche peut satisfaire entièrement cette "
+                "La branche Toulouse peut satisfaire entièrement cette "
                 "liste d’achats."
             ),
         ),
@@ -410,7 +443,7 @@ async def test_query_routes_each_intent_to_one_mcp_method(
         )
 
     assert response.status_code == 200
-    assert response.json() == {
+    assert without_conversation_id(response.json()) == {
         "success": True,
         "answer": expected_answer,
         "type": expected_type,
@@ -425,8 +458,78 @@ async def test_query_routes_each_intent_to_one_mcp_method(
     assert mcp_client.close_count == 1
 
 
-async def test_query_returns_clarification_without_mcp_call() -> None:
-    """Retourne un texte contrôlé pour une demande non comprise."""
+@pytest.mark.parametrize(
+    ("question", "expected_answer"),
+    [
+        (
+            "quelle est la météo ?",
+            OUT_OF_DOMAIN_ANSWER,
+        ),
+        (
+            "raconte-moi une blague",
+            OUT_OF_DOMAIN_ANSWER,
+        ),
+        (
+            "qui est le président ?",
+            OUT_OF_DOMAIN_ANSWER,
+        ),
+        (
+            "donne-moi une recette",
+            OUT_OF_DOMAIN_ANSWER,
+        ),
+        (
+            "combien font deux plus deux ?",
+            OUT_OF_DOMAIN_ANSWER,
+        ),
+        (
+            "écris-moi du JavaScript",
+            OUT_OF_DOMAIN_ANSWER,
+        ),
+        (
+            "donne-moi les détails du produit",
+            "Veuillez préciser l’identifiant du produit.",
+        ),
+        (
+            "où est disponible cet article ?",
+            "Veuillez préciser l’identifiant du produit.",
+        ),
+            (
+                "montre-moi le stock de la branche",
+                (
+                    "Veuillez préciser le nom ou l’identifiant "
+                    "de la branche."
+                ),
+            ),
+        (
+            "vérifie ma liste d’achats",
+            (
+                "Veuillez préciser les produits et les quantités de votre "
+                "liste."
+            ),
+        ),
+        (
+            "ajoute 10 unités du produit 4",
+            READ_ONLY_ANSWER,
+        ),
+        (
+            "supprime le produit 8",
+            READ_ONLY_ANSWER,
+        ),
+        (
+            "modifie le stock de la branche 2",
+            READ_ONLY_ANSWER,
+        ),
+        (
+            "crée une nouvelle agence",
+            READ_ONLY_ANSWER,
+        ),
+    ],
+)
+async def test_query_returns_unsupported_without_mcp_call(
+    question: str,
+    expected_answer: str,
+) -> None:
+    """Refuse ou clarifie avant toute connexion ou lecture MCP."""
 
     mcp_client = FakeApplicationMCPClient()
 
@@ -437,24 +540,20 @@ async def test_query_returns_clarification_without_mcp_call() -> None:
         response = await client.post(
             "/api/query",
             json={
-                "question": "je cherche un produit",
+                "question": question,
             },
         )
 
     assert response.status_code == 200
-    assert response.json() == {
+    assert without_conversation_id(response.json()) == {
         "success": True,
-        "answer": (
-            "Je n’ai pas compris la demande. Demandez une seule "
-            "action avec un identifiant numérique, par exemple "
-            "« stock du produit 12 », ou utilisez « liste "
-            "d’achats : produit 12 x2 »."
-        ),
-        "type": "text",
+        "answer": expected_answer,
+        "type": "unsupported",
         "data": None,
         "error": None,
     }
     assert mcp_client.calls == []
+    assert mcp_client.ensure_count == 0
 
 
 async def test_query_returns_503_when_mcp_connection_failed() -> None:
@@ -478,7 +577,7 @@ async def test_query_returns_503_when_mcp_connection_failed() -> None:
         )
 
     assert response.status_code == 503
-    assert response.json() == {
+    assert without_conversation_id(response.json()) == {
         "success": False,
         "answer": (
             "Le service de données est temporairement indisponible."
@@ -526,6 +625,47 @@ async def test_query_reconnects_before_single_business_call() -> None:
                 "product_id": 12,
             },
         )
+    ]
+
+
+async def test_catalog_route_and_user_query_keep_independent_limits() -> None:
+    """Sépare la pagination technique de la question utilisateur."""
+
+    mcp_client = FakeApplicationMCPClient()
+
+    async with application_client(mcp_client) as (
+        _application,
+        client,
+    ):
+        catalog_response = await client.get(
+            "/api/products?limit=100&offset=0"
+        )
+        query_response = await client.post(
+            "/api/query",
+            json={
+                "question": "liste les 10 premiers produits",
+            },
+        )
+
+    assert catalog_response.status_code == 200
+    assert catalog_response.json()["data"]["limit"] == 100
+    assert query_response.status_code == 200
+    assert query_response.json()["data"]["limit"] == 10
+    assert mcp_client.calls == [
+        (
+            "list_products",
+            {
+                "limit": 100,
+                "offset": 0,
+            },
+        ),
+        (
+            "list_products",
+            {
+                "limit": 10,
+                "offset": 0,
+            },
+        ),
     ]
 
 
@@ -590,6 +730,7 @@ async def test_query_maps_expected_errors_to_http(
     assert response.status_code == expected_status
     body = response.json()
     assert set(body) == {
+        "conversation_id",
         "success",
         "answer",
         "type",
@@ -602,6 +743,50 @@ async def test_query_maps_expected_errors_to_http(
     assert body["error"]["code"] == expected_code
     assert "contenu technique" not in response.text
     assert len(mcp_client.calls) == 1
+
+
+async def test_unknown_product_returns_clear_public_response() -> None:
+    """Explique clairement qu'un produit demandé est introuvable."""
+
+    mcp_client = FakeApplicationMCPClient(
+        method_error=MCPToolResponseError(
+            "get_product_details",
+            "product_not_found",
+        )
+    )
+
+    async with application_client(mcp_client) as (
+        _application,
+        client,
+    ):
+        response = await client.post(
+            "/api/query",
+            json={
+                "question": "détails du produit 999999",
+            },
+        )
+
+    assert response.status_code == 404
+    assert without_conversation_id(response.json()) == {
+        "success": False,
+        "answer": "La ressource demandée n’a pas été trouvée.",
+        "type": "error",
+        "data": None,
+        "error": {
+            "code": "resource_not_found",
+            "message": (
+                "Le produit ou la branche demandé n’existe pas."
+            ),
+        },
+    }
+    assert mcp_client.calls == [
+        (
+            "get_product_details",
+            {
+                "product_id": 999999,
+            },
+        )
+    ]
 
 
 async def test_query_returns_generic_500_for_unexpected_bug(
@@ -625,7 +810,7 @@ async def test_query_returns_generic_500_for_unexpected_bug(
         )
 
     assert response.status_code == 500
-    assert response.json() == {
+    assert without_conversation_id(response.json()) == {
         "success": False,
         "answer": (
             "Une erreur interne empêche le traitement de la demande."

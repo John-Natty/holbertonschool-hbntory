@@ -21,30 +21,18 @@
     <canvas id="matrix" aria-hidden="true"></canvas>
 
     <header>
-        <h1>HBntory</h1>
+        {# La page d'accueil s'adapte déjà au rôle : un seul retour suffit,
+           et le titre est l'endroit où tout le monde le cherche. #}
+        <h1>
+            {% if current_user.is_authenticated %}
+                <a href="{{ url_for('main.dashboard') }}">HBntory</a>
+            {% else %}
+                HBntory
+            {% endif %}
+        </h1>
 
         {% if current_user.is_authenticated %}
             <nav>
-                <a href="{{ url_for('main.dashboard') }}">
-                    Accueil
-                </a>
-
-                {% if current_user.role == "admin" %}
-                    <a href="{{ url_for('admin.list_users') }}">
-                        Utilisateurs
-                    </a>
-                {% endif %}
-
-                {% if current_user.role == "common"
-                    and current_user.branch_id %}
-                    <a href="{{ url_for(
-                        'stock.list_branch_stock',
-                        branch_id=current_user.branch_id
-                    ) }}">
-                        Stock
-                    </a>
-                {% endif %}
-
                 <form
                     action="{{ url_for('auth.logout') }}"
                     method="post"
@@ -80,5 +68,7 @@
     <script
         src="{{ url_for('static', filename='background.js') }}"
     ></script>
+
+    {% block scripts %}{% endblock %}
 </body>
 </html>

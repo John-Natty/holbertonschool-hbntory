@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 from pydantic import (
     AnyHttpUrl,
     Field,
+    SecretStr,
     StringConstraints,
     field_validator,
     model_validator,
@@ -44,6 +45,26 @@ PositiveInt = Annotated[
     Field(gt=0),
 ]
 
+ConversationTTL = Annotated[
+    float,
+    Field(gt=0, le=86_400, allow_inf_nan=False),
+]
+
+ConversationTurnLimit = Annotated[
+    int,
+    Field(gt=0, le=50),
+]
+
+ConversationSessionLimit = Annotated[
+    int,
+    Field(gt=0, le=10_000),
+]
+
+BoundedPositiveInt = Annotated[
+    int,
+    Field(gt=0, le=8192),
+]
+
 CorsOriginList = Annotated[list[str], NoDecode]
 
 
@@ -69,10 +90,52 @@ class Settings(BaseSettings):
     mcp_reconnect_attempts: PositiveInt = 3
     mcp_reconnect_initial_delay_seconds: NonNegativeFiniteFloat = 0.25
     mcp_reconnect_max_delay_seconds: NonNegativeFiniteFloat = 2.0
-    ai_intent_provider: Literal["rules", "ollama"] = "rules"
+    conversation_ttl_seconds: ConversationTTL = 1800.0
+    conversation_max_turns: ConversationTurnLimit = 10
+    conversation_max_sessions: ConversationSessionLimit = 1000
+    ai_model_provider: Literal[
+        "hybrid",
+        "nvidia",
+        "minimax",
+        "rules",
+        "ollama",
+    ] = "hybrid"
+    nvidia_api_key: SecretStr | None = None
+    nvidia_base_url: AnyHttpUrl = (
+        "https://integrate.api.nvidia.com/v1"
+    )
+    nvidia_model: NonEmptyString = "minimaxai/minimax-m3"
+    nvidia_request_timeout_seconds: PositiveFiniteFloat = 120.0
+    nvidia_classification_max_tokens: BoundedPositiveInt = 600
+    nvidia_answer_max_tokens: BoundedPositiveInt = 1000
+    minimax_api_key: SecretStr | None = None
+    minimax_base_url: AnyHttpUrl = "https://api.minimax.io/v1"
+    minimax_model: NonEmptyString = "MiniMax-M3"
+    minimax_request_timeout_seconds: PositiveFiniteFloat = 60.0
+    minimax_classification_max_tokens: BoundedPositiveInt = 600
+    minimax_answer_max_tokens: BoundedPositiveInt = 1000
     ollama_base_url: AnyHttpUrl = "http://ollama:11434"
     ollama_model: NonEmptyString = "gemma3:latest"
-    ollama_request_timeout_seconds: PositiveFiniteFloat = 30.0
+    ollama_request_timeout_seconds: PositiveFiniteFloat = 60.0
+    ollama_classification_max_tokens: BoundedPositiveInt = 600
+    ollama_answer_max_tokens: BoundedPositiveInt = 1000
+
+    @field_validator(
+        "nvidia_api_key",
+        "minimax_api_key",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_provider_key(
+        cls,
+        value: object,
+    ) -> object:
+        """Traite une clé fournisseur vide comme non configurée."""
+
+        if isinstance(value, str) and not value.strip():
+            return None
+
+        return value
 
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod
@@ -175,6 +238,8 @@ class Settings(BaseSettings):
     @field_validator(
         "mcp_max_concurrent_calls",
         "mcp_reconnect_attempts",
+        "conversation_max_turns",
+        "conversation_max_sessions",
         mode="before",
     )
     @classmethod
@@ -184,6 +249,29 @@ class Settings(BaseSettings):
         if isinstance(value, bool):
             raise ValueError(
                 "La concurrence MCP doit être un entier positif."
+            )
+
+        return value
+
+    @field_validator(
+        "conversation_ttl_seconds",
+        mode="before",
+    )
+    @classmethod
+    def reject_invalid_conversation_ttl(
+        cls,
+        value: object,
+    ) -> object:
+        """Refuse un TTL booléen ou non fini."""
+
+        if isinstance(value, bool):
+            raise ValueError(
+                "Le TTL des conversations doit être positif."
+            )
+
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(
+                "Le TTL des conversations doit être fini."
             )
 
         return value
@@ -213,31 +301,56 @@ class Settings(BaseSettings):
         return value
 
     @field_validator(
+        "nvidia_request_timeout_seconds",
+        "minimax_request_timeout_seconds",
         "ollama_request_timeout_seconds",
         mode="before",
     )
     @classmethod
-    def reject_invalid_ollama_timeout(
+    def reject_invalid_model_timeout(
         cls,
         value: object,
     ) -> object:
-        """Refuse une durée Ollama booléenne ou non finie."""
+        """Refuse une durée de fournisseur booléenne ou non finie."""
 
         if isinstance(value, bool):
             raise ValueError(
-                "Le délai Ollama doit être un nombre positif."
+                "Le délai du fournisseur doit être un nombre positif."
             )
 
         if isinstance(value, float) and not math.isfinite(value):
             raise ValueError(
-                "Le délai Ollama doit être un nombre fini."
+                "Le délai du fournisseur doit être un nombre fini."
+            )
+
+        return value
+
+    @field_validator(
+        "nvidia_classification_max_tokens",
+        "nvidia_answer_max_tokens",
+        "minimax_classification_max_tokens",
+        "minimax_answer_max_tokens",
+        "ollama_classification_max_tokens",
+        "ollama_answer_max_tokens",
+        mode="before",
+    )
+    @classmethod
+    def reject_boolean_token_limit(
+        cls,
+        value: object,
+    ) -> object:
+        """Refuse un booléen utilisé comme limite de génération."""
+
+        if isinstance(value, bool):
+            raise ValueError(
+                "La limite de jetons doit être un entier positif."
             )
 
         return value
 
     @model_validator(mode="after")
     def validate_reconnect_delay_bounds(self) -> "Settings":
-        """Exige un plafond supérieur ou égal au délai initial."""
+        """Valide les bornes de la stratégie de reconnexion."""
 
         if (
             self.mcp_reconnect_max_delay_seconds

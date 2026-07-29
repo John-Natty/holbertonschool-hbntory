@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Opérations de stock disponibles pour un common user."""
 
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from app.extensions import db
@@ -72,28 +73,48 @@ def add_stock(branch_id: int, product_id: int, amount: int) -> Stock:
 
 
 def remove_stock(branch_id: int, product_id: int, amount: int) -> Stock:
-    """Retire une quantité du stock d'un produit dans une branche."""
+    """Retire atomiquement une quantité disponible dans une branche."""
 
     # Valide la branche et la quantité retirée.
     validate_branch(branch_id)
     validate_amount(amount)
 
-    # Le produit doit déjà être en stock dans la branche.
-    stock = _find_stock(branch_id, product_id)
+    # PostgreSQL décide dans une seule instruction si le retrait est possible.
+    # La condition est réévaluée après l'attente d'un éventuel verrou concurrent.
+    statement = (
+        update(Stock)
+        .where(
+            Stock.branch_id == branch_id,
+            Stock.product_id == product_id,
+            Stock.quantity >= amount,
+        )
+        .values(quantity=Stock.quantity - amount)
+        .returning(Stock)
+    )
+
+    try:
+        stock = db.session.execute(statement).scalar_one_or_none()
+
+    except SQLAlchemyError as error:
+        db.session.rollback()
+
+        raise StockOperationError(
+            "L'enregistrement du stock a échoué."
+        ) from error
 
     if stock is None:
-        raise StockValidationError(
-            "Ce produit n'est pas en stock dans cette branche."
-        )
+        # Distingue un produit absent d'une quantité devenue insuffisante.
+        existing_stock = _find_stock(branch_id, product_id)
+        db.session.rollback()
 
-    # On ne peut pas retirer plus que la quantité disponible.
-    if amount > stock.quantity:
+        if existing_stock is None:
+            raise StockValidationError(
+                "Ce produit n'est pas en stock dans cette branche."
+            )
+
         raise StockValidationError(
             "Quantité insuffisante en stock."
         )
-
-    # Décrémente le stock.
-    stock.quantity -= amount
 
     _commit_or_fail()
 

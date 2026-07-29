@@ -5,6 +5,7 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 AI_SERVICE_ROOT = REPOSITORY_ROOT / "ai_service"
+CLIENT_WEB_ROOT = REPOSITORY_ROOT / "client_web"
 
 
 def _compose_service_block(service_name: str) -> str:
@@ -87,8 +88,8 @@ def test_ai_dockerignore_excludes_local_and_test_files() -> None:
     } <= entries
 
 
-def test_compose_ai_service_uses_only_internal_mcp_and_ollama_urls() -> None:
-    """Contrôle les variables et dépendances du service IA."""
+def test_compose_ai_service_configures_hybrid_without_secret() -> None:
+    """Contrôle Ollama, NVIDIA, MCP et l'absence de secrets internes."""
 
     service = _compose_service_block("ai-service")
 
@@ -107,14 +108,91 @@ def test_compose_ai_service_uses_only_internal_mcp_and_ollama_urls() -> None:
     assert "MCP_RECONNECT_ATTEMPTS: 3" in service
     assert "MCP_RECONNECT_INITIAL_DELAY_SECONDS: 0.25" in service
     assert "MCP_RECONNECT_MAX_DELAY_SECONDS: 2" in service
-    assert "AI_INTENT_PROVIDER: ${AI_INTENT_PROVIDER:-rules}" in service
+    assert (
+        "CONVERSATION_TTL_SECONDS: "
+        "${CONVERSATION_TTL_SECONDS:-1800}"
+        in service
+    )
+    assert (
+        "CONVERSATION_MAX_TURNS: "
+        "${CONVERSATION_MAX_TURNS:-10}"
+        in service
+    )
+    assert (
+        "CONVERSATION_MAX_SESSIONS: "
+        "${CONVERSATION_MAX_SESSIONS:-1000}"
+        in service
+    )
+    assert "AI_MODEL_PROVIDER: ${AI_MODEL_PROVIDER:-hybrid}" in service
+    assert "NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}" in service
+    assert (
+        "NVIDIA_BASE_URL: "
+        "${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}"
+        in service
+    )
+    assert (
+        "NVIDIA_MODEL: ${NVIDIA_MODEL:-minimaxai/minimax-m3}"
+        in service
+    )
+    assert (
+        "NVIDIA_REQUEST_TIMEOUT_SECONDS: "
+        "${NVIDIA_REQUEST_TIMEOUT_SECONDS:-120}"
+        in service
+    )
+    assert (
+        "NVIDIA_CLASSIFICATION_MAX_TOKENS: "
+        "${NVIDIA_CLASSIFICATION_MAX_TOKENS:-600}"
+        in service
+    )
+    assert (
+        "NVIDIA_ANSWER_MAX_TOKENS: "
+        "${NVIDIA_ANSWER_MAX_TOKENS:-1000}"
+        in service
+    )
+    assert "MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}" in service
+    assert (
+        "MINIMAX_BASE_URL: "
+        "${MINIMAX_BASE_URL:-https://api.minimax.io/v1}"
+        in service
+    )
+    assert "MINIMAX_MODEL: ${MINIMAX_MODEL:-MiniMax-M3}" in service
+    assert (
+        "MINIMAX_REQUEST_TIMEOUT_SECONDS: "
+        "${MINIMAX_REQUEST_TIMEOUT_SECONDS:-60}"
+        in service
+    )
+    assert (
+        "MINIMAX_CLASSIFICATION_MAX_TOKENS: "
+        "${MINIMAX_CLASSIFICATION_MAX_TOKENS:-600}"
+        in service
+    )
+    assert (
+        "MINIMAX_ANSWER_MAX_TOKENS: "
+        "${MINIMAX_ANSWER_MAX_TOKENS:-1000}"
+        in service
+    )
     assert "OLLAMA_BASE_URL: http://ollama:11434" in service
     assert "OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:latest}" in service
+    assert (
+        "OLLAMA_REQUEST_TIMEOUT_SECONDS: "
+        "${OLLAMA_REQUEST_TIMEOUT_SECONDS:-60}"
+        in service
+    )
+    assert (
+        "OLLAMA_CLASSIFICATION_MAX_TOKENS: "
+        "${OLLAMA_CLASSIFICATION_MAX_TOKENS:-600}"
+        in service
+    )
+    assert (
+        "OLLAMA_ANSWER_MAX_TOKENS: "
+        "${OLLAMA_ANSWER_MAX_TOKENS:-1000}"
+        in service
+    )
     assert "${AI_SERVICE_HOST_PORT:-8001}:8001" in service
     assert "product-mcp-server:" in service
     assert "condition: service_started" in service
-    assert "condition: service_healthy" not in service
-    assert "\n      ollama:" not in service
+    assert "\n      ollama:" in service
+    assert "condition: service_healthy" in service
     assert "http://localhost:8001/health" in service
     assert "http://localhost:8001/ready" not in service
     assert "DATABASE_URL" not in service
@@ -124,8 +202,8 @@ def test_compose_ai_service_uses_only_internal_mcp_and_ollama_urls() -> None:
     assert "volumes:" not in service
 
 
-def test_compose_ollama_is_optional_and_persists_only_models() -> None:
-    """Vérifie le profil, le healthcheck et le volume Ollama."""
+def test_compose_ollama_is_started_and_persists_only_models() -> None:
+    """Vérifie le service local, le healthcheck et son volume."""
 
     compose = REPOSITORY_ROOT.joinpath(
         "docker-compose.yml"
@@ -133,10 +211,41 @@ def test_compose_ollama_is_optional_and_persists_only_models() -> None:
     service = _compose_service_block("ollama")
 
     assert "image: ollama/ollama:" in service
-    assert "profiles:" in service
-    assert "- ollama" in service
+    assert "profiles:" not in service
     assert "11434}:11434" in service
     assert "ollama-data:/root/.ollama" in service
     assert "- ollama\n        - list" in service
     assert "ollama pull" not in compose
     assert "\n  ollama-data:" in compose
+
+
+def test_client_catalog_keeps_conversation_and_bypasses_generation() -> None:
+    """Vérifie l'intégration des cartes avec le contrat IA moderne."""
+
+    html = CLIENT_WEB_ROOT.joinpath("index.html").read_text(
+        encoding="utf-8"
+    )
+    script = CLIENT_WEB_ROOT.joinpath("script.js").read_text(
+        encoding="utf-8"
+    )
+    dockerfile = CLIENT_WEB_ROOT.joinpath("Dockerfile").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'id="catalog-grid"' in html
+    assert 'id="catalog-list"' not in html
+    assert "COPY img/ /usr/share/nginx/html/img/" in dockerfile
+    assert CLIENT_WEB_ROOT.joinpath(
+        "img/categories/default.webp"
+    ).is_file()
+    assert "const catalogGrid" in script
+    assert "buildProductCard(product)" in script
+    assert "CONVERSATION_STORAGE_KEY" in script
+    assert "sessionStorage.getItem" in script
+    assert "sessionStorage.setItem" in script
+    assert (
+        'AI_PRODUCTS_URL + "?limit=100&offset=0"'
+        in script
+    )
+    assert 'askQuestion("liste les 100 premiers produits")' not in script
+    assert 'data.type === "stock_by_product"' not in script

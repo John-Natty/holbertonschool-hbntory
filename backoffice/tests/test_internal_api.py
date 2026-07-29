@@ -217,6 +217,123 @@ def test_stock_by_branch_returns_not_found(
     }
 
 
+def test_stock_by_branch_name_requires_internal_key(client):
+    """Protège aussi la résolution par nom avec la clé interne."""
+
+    response = client.get(
+        "/internal/stocks/branches/by-name",
+        query_string={"name": "Toulouse"},
+    )
+
+    assert response.status_code == 403
+    assert response.get_json()["error"]["code"] == "forbidden"
+
+
+def test_stock_by_branch_name_is_case_insensitive_and_normalizes_spaces(
+    client,
+    internal_api_headers,
+    branch,
+):
+    """Résout le même nom quelle que soit la casse ou les espaces."""
+
+    create_stock(branch, product_id=12, quantity=8)
+
+    for branch_name in (
+        branch.name,
+        branch.name.lower(),
+        branch.name.upper(),
+        f"  {branch.name}  ",
+    ):
+        response = client.get(
+            "/internal/stocks/branches/by-name",
+            query_string={"name": branch_name},
+            headers=internal_api_headers,
+        )
+
+        assert response.status_code == 200
+        assert response.get_json() == {
+            "success": True,
+            "branch": {
+                "id": branch.id,
+                "name": branch.name,
+            },
+            "stocks": [
+                {
+                    "product_id": 12,
+                    "quantity": 8,
+                },
+            ],
+            "error": None,
+        }
+
+
+def test_stock_by_branch_name_returns_structured_not_found(
+    client,
+    internal_api_headers,
+):
+    """Retourne une erreur métier lorsque le nom est inconnu."""
+
+    response = client.get(
+        "/internal/stocks/branches/by-name",
+        query_string={"name": "Inconnue"},
+        headers=internal_api_headers,
+    )
+
+    assert response.status_code == 404
+    assert response.get_json() == {
+        "success": False,
+        "error": {
+            "code": "branch_not_found",
+            "message": "La branche demandée n'existe pas.",
+        },
+    }
+
+
+def test_stock_by_branch_name_rejects_empty_name(
+    client,
+    internal_api_headers,
+):
+    """Refuse un nom manquant ou vide."""
+
+    response = client.get(
+        "/internal/stocks/branches/by-name",
+        query_string={"name": "   "},
+        headers=internal_api_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["code"] == (
+        "invalid_branch_name"
+    )
+
+
+def test_stock_by_branch_name_rejects_ambiguous_normalized_match(
+    client,
+    internal_api_headers,
+    app_context,
+):
+    """Ne choisit jamais arbitrairement entre deux noms normalisés."""
+
+    db.session.add_all(
+        [
+            Branch(name="Toulouse"),
+            Branch(name="  Toulouse  "),
+        ]
+    )
+    db.session.commit()
+
+    response = client.get(
+        "/internal/stocks/branches/by-name",
+        query_string={"name": "toulouse"},
+        headers=internal_api_headers,
+    )
+
+    assert response.status_code == 409
+    assert response.get_json()["error"]["code"] == (
+        "ambiguous_branch"
+    )
+
+
 def test_shopping_list_returns_matching_branches(
     client,
     internal_api_headers,

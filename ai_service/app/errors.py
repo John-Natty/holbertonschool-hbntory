@@ -58,3 +58,35 @@ class IntentClassifierTimeoutError(IntentClassifierError):
 
 class IntentClassifierResponseError(IntentClassifierError):
     """Signale une réponse de classification invalide."""
+
+
+class MiniMaxClientError(Exception):
+    """Classe de base des erreurs MiniMax attendues et nettoyées."""
+
+
+class MiniMaxTimeoutError(MiniMaxClientError):
+    """Signale le dépassement du délai d'un appel MiniMax."""
+
+
+class MiniMaxConnectionError(MiniMaxClientError):
+    """Signale une erreur réseau avant toute réponse MiniMax."""
+
+
+class MiniMaxAuthenticationError(MiniMaxClientError):
+    """Signale le refus des informations d'authentification."""
+
+
+class MiniMaxRateLimitError(MiniMaxClientError):
+    """Signale que le quota ou le débit autorisé est dépassé."""
+
+
+class MiniMaxServiceError(MiniMaxClientError):
+    """Signale un statut HTTP non réussi retourné par MiniMax."""
+
+
+class MiniMaxResponseError(MiniMaxClientError):
+    """Signale une réponse MiniMax vide ou structurellement invalide."""
+
+
+class GeneratedAnswerError(Exception):
+    """Signale une rédaction générée invalide ou insuffisamment ancrée."""

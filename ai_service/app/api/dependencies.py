@@ -5,30 +5,24 @@ from typing import cast
 from fastapi import Request
 
 from app.clients.mcp_client import ProductMCPClient
-from app.services.query_service import (
-    QueryService,
-    UnavailableQueryService,
-)
+from app.services.orchestrator import QueryOrchestrator
 
 
-_query_service = UnavailableQueryService()
-
-
-async def get_query_service(
+async def get_query_orchestrator(
     request: Request,
-) -> QueryService:
-    """Lit le service partagé, avec un fallback contrôlé."""
+) -> QueryOrchestrator | None:
+    """Lit l'unique orchestrateur construit pendant le lifespan."""
 
-    service = getattr(
+    orchestrator = getattr(
         request.app.state,
-        "query_service",
+        "query_orchestrator",
         None,
     )
 
-    if service is None:
-        return _query_service
+    if orchestrator is None:
+        return None
 
-    return cast(QueryService, service)
+    return cast(QueryOrchestrator, orchestrator)
 
 
 async def get_mcp_client(

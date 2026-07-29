@@ -2,9 +2,16 @@
 
 from typing import Annotated, Literal
 
-from pydantic import Field, StringConstraints, TypeAdapter
+from pydantic import (
+    Field,
+    field_validator,
+    model_validator,
+    StringConstraints,
+    TypeAdapter,
+)
 
 from app.models.data import (
+    BranchName,
     PageLimit,
     ProductDetailsData,
     ProductListData,
@@ -43,10 +50,32 @@ class ProductIdentifierArguments(StrictModel):
     product_id: StrictPositiveInt
 
 
-class BranchIdentifierArguments(StrictModel):
-    """Valide un identifiant de branche avant l'appel MCP."""
+class BranchReferenceArguments(StrictModel):
+    """Valide exactement une référence de branche avant l'appel MCP."""
 
-    branch_id: StrictPositiveInt
+    branch_id: StrictPositiveInt | None = None
+    branch_name: BranchName | None = None
+
+    @field_validator("branch_name", mode="before")
+    @classmethod
+    def normalize_branch_name(cls, value):
+        """Normalise les espaces sans altérer le nom."""
+
+        if isinstance(value, str):
+            return " ".join(value.split())
+
+        return value
+
+    @model_validator(mode="after")
+    def require_exactly_one_reference(self):
+        """Exige soit l'identifiant, soit le nom, jamais les deux."""
+
+        if (self.branch_id is None) == (self.branch_name is None):
+            raise ValueError(
+                "Une seule référence de branche doit être fournie."
+            )
+
+        return self
 
 
 class ShoppingListArguments(StrictModel):
