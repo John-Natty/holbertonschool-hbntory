@@ -478,9 +478,12 @@ class QueryOrchestrator:
                     question,
                     response,
                 )
-        except GeneratedAnswerError:
+        except GeneratedAnswerError as error:
+            # Le motif du rejet est indispensable pour diagnostiquer un
+            # fournisseur qui ne respecte pas le format attendu.
             logger.warning(
-                "La réponse naturelle a été remplacée par le fallback."
+                "La réponse naturelle a été remplacée par le fallback : %s",
+                error,
             )
             return response
 

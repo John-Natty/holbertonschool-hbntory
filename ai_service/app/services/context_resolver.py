@@ -226,6 +226,13 @@ class ContextResolver:
     ) -> QueryIntent | None:
         """Traite un petit ensemble de références explicites et bornées."""
 
+        # Une question qui nomme elle-même son produit se suffit à elle
+        # même : ce n'est pas une reprise du tour précédent, et les
+        # résolutions par référence ne doivent pas la confisquer.
+        explicit_product = (
+            _EXPLICIT_PRODUCT_PATTERN.search(normalized) is not None
+        )
+
         ordinal_match = _ORDINAL_PATTERN.search(normalized)
 
         if ordinal_match is not None:
@@ -257,7 +264,14 @@ class ContextResolver:
         if any(marker in normalized for marker in _SAME_BRANCH_MARKERS):
             return self._reuse_branch(normalized, state)
 
-        branch_match = _BRANCH_FOLLOWUP_PATTERN.fullmatch(normalized)
+        # « Et à Toulouse ? » change la branche du tour précédent. Une
+        # question qui cite son propre produit n'entre pas dans ce cas,
+        # même lorsqu'elle commence par « dans ».
+        branch_match = (
+            None
+            if explicit_product
+            else _BRANCH_FOLLOWUP_PATTERN.fullmatch(normalized)
+        )
 
         if branch_match is not None:
             branch_name = _clean_branch_name(
@@ -265,8 +279,9 @@ class ContextResolver:
             )
             return self._switch_branch(branch_name, state)
 
-        if "ou puis je le trouver" in normalized or (
-            "combien" in normalized and "reste" in normalized
+        if not explicit_product and (
+            "ou puis je le trouver" in normalized
+            or ("combien" in normalized and "reste" in normalized)
         ):
             if state.last_product_id is None:
                 return _unsupported("missing_product_id")
@@ -276,7 +291,9 @@ class ContextResolver:
                 **_state_branch_reference(state),
             )
 
-        if any(marker in normalized for marker in _PRONOUN_MARKERS):
+        if not explicit_product and any(
+            marker in normalized for marker in _PRONOUN_MARKERS
+        ):
             return self._resolve_product_pronoun(normalized, state)
 
         combined = self._resolve_combined_product_branch(normalized)

@@ -93,6 +93,10 @@ class Settings(BaseSettings):
     conversation_ttl_seconds: ConversationTTL = 1800.0
     conversation_max_turns: ConversationTurnLimit = 10
     conversation_max_sessions: ConversationSessionLimit = 1000
+    # Seconde passe qui fait rédiger la réponse par le modèle. La
+    # compréhension de la question, elle, reste toujours active.
+    # La désactiver supprime un appel réseau par question.
+    ai_natural_answers: bool = True
     ai_model_provider: Literal[
         "nvidia",
         "rules",
